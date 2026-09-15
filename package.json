@@ -1,0 +1,86 @@
+{
+  "name": "pomodoro",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "icon:generate": "node scripts/generate-icon.js",
+    "desktop:dev": "npm run desktop:build:electron && concurrently -k -n NEXT,ELECTRON -c blue,green \"npm run dev\" \"wait-on http://localhost:3000 && electron dist-electron/main.js\"",
+    "desktop:build:web": "cross-env ELECTRON_BUILD=true next build",
+    "desktop:build:electron": "tsc -p electron/tsconfig.json",
+    "desktop:build": "npm run desktop:build:web && npm run desktop:build:electron && electron-builder",
+    "desktop:dist": "npm run desktop:build:web && npm run desktop:build:electron && electron-builder --publish never",
+    "release:win": "npm run desktop:build:web && npm run desktop:build:electron && electron-builder --publish always"
+  },
+  "build": {
+    "appId": "com.nyanyangddung.app",
+    "productName": "냐냐냥뜡",
+    "files": [
+      "dist-electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "out-electron",
+        "to": "out-electron"
+      }
+    ],
+    "directories": {
+      "buildResources": "build"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "냐냐냥뜡",
+      "uninstallDisplayName": "냐냐냥뜡",
+      "artifactName": "Nyanyangddung-Setup-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "REPLACE_WITH_GITHUB_OWNER",
+      "repo": "REPLACE_WITH_GITHUB_REPO_NAME",
+      "releaseType": "release"
+    }
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.114.0",
+    "@react-three/fiber": "^8.17.10",
+    "@supabase/supabase-js": "^2.116.0",
+    "electron-updater": "^6.8.9",
+    "next": "^14.2.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.169.0",
+    "three-stdlib": "2.36.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.11",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@types/three": "^0.169.0",
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "sharp": "^0.35.4",
+    "tsx": "^4.23.13",
+    "typescript": "^5.6.3",
+    "wait-on": "^9.1.0"
+  }
+}

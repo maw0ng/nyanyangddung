@@ -1,0 +1,32 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# electron desktop build output
+/out-electron/
+/dist-electron/
+/dist/
+
+# electron-builder build resources (build/icon.png, build/icon.ico) are
+# SOURCE assets checked into the repo, not generated output - never ignore
+# this directory. (electron-builder's own debug/output files land under
+# /dist/, already ignored above.)
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts

@@ -1,0 +1,89 @@
+name: Release Windows
+
+# Only a version tag push triggers a real Release (section 25) - never a
+# plain commit/push to a branch. Push a tag with:
+#   git tag v1.0.0
+#   git push origin v1.0.0
+on:
+  push:
+    tags:
+      - "v*"
+
+# Least privilege (section 27) - just enough for the softprops/gh-cli
+# release step (via electron-builder's own GitHub publish) to create the
+# Release and upload assets with the automatically-provided GITHUB_TOKEN.
+# No other permission block is added.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Section 26 - the pushed tag (vX.Y.Z) and package.json's own
+      # "version" field must agree, or the Release is refused outright
+      # rather than publishing a mismatched build.
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "tag version: $TAG_VERSION"
+          echo "package.json version: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Typecheck (web)
+        run: npx tsc --noEmit
+
+      - name: Typecheck (electron)
+        run: npx tsc -p electron/tsconfig.json --noEmit
+
+      - name: Next.js production build (web, sanity check)
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      - name: Next.js static export for Electron
+        run: npm run desktop:build:web
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      - name: Compile Electron main/preload
+        run: npm run desktop:build:electron
+
+      # Builds the NSIS installer AND uploads installer + latest.yml +
+      # .blockmap to the GitHub Release for this tag (section 24/29) - a
+      # single command does both (electron-builder's own GitHub publish
+      # provider), so there is no separate "forgot to upload metadata"
+      # step to miss.
+      #
+      # CSC_IDENTITY_AUTO_DISCOVERY=false (section 31): a fresh GitHub-
+      # hosted runner never has a local code-signing certificate anyway,
+      # but this makes "this build is unsigned" an explicit, intentional
+      # setting rather than an implicit side effect of the runner having
+      # nothing installed - so it can never silently start picking up a
+      # certificate later if the runner image ever changes.
+      - name: Build and publish Windows installer
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
