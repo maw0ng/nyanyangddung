@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { useGLTF } from "@react-three/drei";
 import { collectMaterialTargets } from "./textureIO";
@@ -93,6 +93,17 @@ export default function ToonStyleController({ ready, settings }: ToonStyleContro
   const targetsRef = useRef<ToonTarget[]>([]);
   const outlineHandleRef = useRef<OutlineMaterialHandle | null>(null);
   const loggedRef = useRef(false);
+  // Flips once the deferred target-collection effect below actually
+  // populates `targetsRef` (bug fix - that effect fills the ref inside a
+  // setTimeout(0), which runs in a LATER macrotask than the toon-apply and
+  // outline effects' own synchronous first run off the same `ready` flip;
+  // both of those effects read `targetsRef.current` while it's still `[]`
+  // at that point, see `targets.length === 0` and permanently no-op since
+  // nothing else was in their dependency array to make them run again -
+  // Toon was never actually applied anywhere, in the Editor OR Desktop.
+  // Adding this as a real state value they both depend on makes them
+  // re-run exactly once more, right after targets become available.
+  const [targetsReady, setTargetsReady] = useState(false);
 
   // Phase 1 (section 3): dump the real runtime mesh/material structure
   // once - nothing below is implemented from a guess about this structure.
@@ -173,6 +184,7 @@ export default function ToonStyleController({ ready, settings }: ToonStyleContro
         return;
       }
       targetsRef.current = targets;
+      setTargetsReady(true);
     }, 0);
     return () => clearTimeout(timer);
   }, [ready, gltf]);
@@ -198,7 +210,7 @@ export default function ToonStyleController({ ready, settings }: ToonStyleContro
       }
       setMeshMaterial(t.mesh, t.materialIndex, t.toonMaterial);
     }
-  }, [ready, settings]);
+  }, [ready, settings, targetsReady]);
 
   // Outline lifecycle - kept independent of the toon-material effect so
   // toggling only the outline never rebuilds/reassigns toon materials.
@@ -233,7 +245,7 @@ export default function ToonStyleController({ ready, settings }: ToonStyleContro
       }
       t.outlineMesh.visible = true;
     }
-  }, [ready, settings.enabled, settings.outlineEnabled, settings.outlineWidth, settings.outlineStrength]);
+  }, [ready, settings.enabled, settings.outlineEnabled, settings.outlineWidth, settings.outlineStrength, targetsReady]);
 
   return null;
 }
