@@ -750,6 +750,38 @@ export default function HairPaintPrototype() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [editMode, cosmeticSubMode]);
 
+  // Cosmetic Transform sub-mode must edit against the SAME Head-bone
+  // orientation Desktop actually renders with (bug fix - discovered via a
+  // real installed-app report: accessories positioned via TransformControls
+  // here looked correct in the Editor but were wildly displaced on
+  // Desktop). The Editor's default "Rest Pose" (startInEditMode below) is
+  // the raw glTF bind pose, whose Head bone orientation differs from every
+  // actual AnimationClip (Idle/Work/Break/...) by roughly 90 degrees for
+  // this rig (see cosmeticRegistry.ts's own defaultTransform comments,
+  // already tuned against animated pose for exactly this reason) -
+  // Desktop/DesktopAvatarScene never shows Rest Pose at all, it always
+  // plays Idle. A transform a user drags/drops while frozen in Rest Pose is
+  // therefore calibrated for a pose Desktop never uses, and ends up
+  // nowhere near the head once Idle's own Head-bone orientation applies
+  // it - exactly the bug reported.
+  //
+  // Fix: exit Rest Pose (crossfade into the persistent state - Idle unless
+  // the dev Animation Test Panel changed it) for as long as the user is
+  // specifically in Cosmetic Transform sub-mode, so what they see while
+  // dragging the gizmo is the SAME Head-bone orientation Desktop will
+  // apply the saved transform against. Every other mode (Hair/Face/Tops/
+  // Cosmetic Paint included - paint only reads mesh UVs, which don't
+  // depend on world-space bone orientation at all) stays in the frozen
+  // Rest Pose exactly as before, so raycast-painting precision is
+  // unaffected.
+  useEffect(() => {
+    if (editMode === "cosmetic" && cosmeticSubMode === "transform") {
+      animationSceneRef.current?.exitEditMode();
+    } else {
+      animationSceneRef.current?.enterEditMode();
+    }
+  }, [editMode, cosmeticSubMode]);
+
   // ===== Characters ("My Characters") =======================================
   // A CharacterPreset is a self-contained snapshot of the whole character's
   // appearance at save time (gatherAppearance below always produces fresh
