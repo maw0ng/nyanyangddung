@@ -87,3 +87,54 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      # Safety net for a known electron-builder race condition: when it
+      # uploads the installer + .blockmap concurrently, each upload can
+      # independently see "no release for this tag yet" and each create its
+      # OWN release, leaving two releases on the same tag - one with every
+      # asset, one with only whichever file's upload started first (empty/
+      # near-empty). Confirmed happening on this repo's own first v1.0.0
+      # release. This step detects that, keeps only the release with the
+      # most assets, deletes any other duplicate(s) for this tag, and then
+      # fails the workflow loudly if the surviving release is still missing
+      # latest.yml or the installer - so a broken auto-update feed is never
+      # silently left in place (section 29).
+      - name: Verify and deduplicate GitHub release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          REPO="${{ github.repository }}"
+          TAG="${GITHUB_REF_NAME}"
+
+          mapfile -t IDS < <(gh api "repos/$REPO/releases" --jq ".[] | select(.tag_name==\"$TAG\") | .id")
+          echo "Found ${#IDS[@]} release(s) for tag $TAG: ${IDS[*]}"
+
+          if [ "${#IDS[@]}" -gt 1 ]; then
+            echo "::warning::Multiple releases found for tag $TAG (electron-builder publish race) - keeping the one with the most assets."
+            BEST_ID=""
+            BEST_COUNT=-1
+            for ID in "${IDS[@]}"; do
+              N=$(gh api "repos/$REPO/releases/$ID" --jq '.assets | length')
+              echo "  release $ID has $N asset(s)"
+              if [ "$N" -gt "$BEST_COUNT" ]; then
+                BEST_COUNT=$N
+                BEST_ID=$ID
+              fi
+            done
+            for ID in "${IDS[@]}"; do
+              if [ "$ID" != "$BEST_ID" ]; then
+                echo "Deleting duplicate release $ID"
+                gh api "repos/$REPO/releases/$ID" -X DELETE
+              fi
+            done
+          fi
+
+          FINAL_ID=$(gh api "repos/$REPO/releases" --jq ".[] | select(.tag_name==\"$TAG\") | .id")
+          ASSET_NAMES=$(gh api "repos/$REPO/releases/$FINAL_ID" --jq '.assets[].name')
+          echo "Final release $FINAL_ID assets:"
+          echo "$ASSET_NAMES"
+
+          echo "$ASSET_NAMES" | grep -qx "latest.yml" || { echo "::error::latest.yml missing from release $FINAL_ID - auto-update will not work"; exit 1; }
+          echo "$ASSET_NAMES" | grep -qE '^Nyanyangddung-Setup-.*\.exe$' || { echo "::error::installer .exe missing from release $FINAL_ID"; exit 1; }

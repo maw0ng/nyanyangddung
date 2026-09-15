@@ -81,6 +81,21 @@ git push origin v1.0.0
 를 자동으로 수행한다. **일반 commit/push로는 Release가 생성되지 않는다** -
 `v*` 형태의 태그를 push했을 때만 동작한다.
 
+### 알려진 이슈: 중복 Release (자동 정리됨)
+
+electron-builder가 인스톨러와 `.blockmap`을 병렬 업로드하는 과정에서, 아주 가끔
+"이 태그로 된 Release가 아직 없다"는 판단을 두 번 동시에 내려서 **같은 태그로
+Release를 2개 만드는 경우가 있다** (v1.0.0 첫 배포에서 실제로 한 번 발생했음 -
+하나는 정상, 다른 하나는 파일이 1개만 있는 불완전한 쪽이었다). Workflow의
+"Verify and deduplicate GitHub release assets" 단계가 매 배포마다 자동으로:
+- 같은 태그의 Release가 여러 개면 asset이 가장 많은 것만 남기고 나머지 삭제
+- 최종 Release에 `latest.yml`과 설치 파일(`.exe`)이 둘 다 있는지 확인, 없으면
+  workflow 자체를 실패시킴
+
+을 수행하므로 보통은 신경 쓸 필요가 없다. 그래도 배포 후에는
+`gh release view vX.Y.Z --repo <owner>/<repo>`로 asset 목록을 한 번 확인하는
+습관을 들이면 좋다.
+
 ## 6. 자동 업데이트 동작 방식
 
 - 설치된 앱이 실행되면 몇 초 후 백그라운드에서 GitHub Releases를 확인한다
