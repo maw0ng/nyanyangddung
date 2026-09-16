@@ -73,6 +73,19 @@ declare global {
      * function; call it on unmount like any other event subscription. */
     onCharacterPresetUpdated: (callback: () => void) => () => void;
 
+    /** Called by the Editor window after its (debounced) Toon Style save
+     * to localStorage settles - relayed to the Desktop window as a
+     * "toon-settings-updated" event. Carries no settings data itself (see
+     * onToonSettingsUpdated) - same shape/convention as notifyPresetSaved,
+     * kept as its own separate signal since Toon Style is an app-wide
+     * preference, not part of CharacterPreset (toonStyle.ts). */
+    notifyToonSettingsSaved: () => Promise<void>;
+    /** Desktop-side listener for the above - fires with no arguments
+     * (callers re-read toonStyle.ts's loadToonSettings() themselves, same
+     * convention as onCharacterPresetUpdated). Returns an unsubscribe
+     * function; call it on unmount like any other event subscription. */
+    onToonSettingsUpdated: (callback: () => void) => () => void;
+
     /** The user's persisted Desktop Pet display size (0.5 - 1.5, 1.0 =
      * 100%) - read once at mount to hydrate initial React state. */
     getAvatarScale: () => Promise<number>;

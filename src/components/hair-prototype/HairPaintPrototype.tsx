@@ -229,9 +229,23 @@ export default function HairPaintPrototype() {
   // Debounced (not on every single slider tick, which fires onChange
   // continuously while dragging) - same "live UI updates immediately, disk
   // write settles shortly after" convention as this file's own CharacterPreset
-  // autosave.
+  // autosave. Also notifies Desktop to live-refresh (bug fix - Desktop used
+  // to only ever read this once at its own mount, so a Toon change made
+  // while Desktop was already running/open never showed up on the real
+  // avatar until Desktop restarted) - skips the very first run (initial
+  // load from localStorage, nothing actually changed yet) via
+  // toonMountedRef, same "don't notify on mount" convention as everywhere
+  // else in this file that syncs to Desktop.
+  const toonMountedRef = useRef(false);
   useEffect(() => {
-    const timer = setTimeout(() => saveToonSettings(toonSettings), 400);
+    if (!toonMountedRef.current) {
+      toonMountedRef.current = true;
+      return;
+    }
+    const timer = setTimeout(() => {
+      saveToonSettings(toonSettings);
+      window.desktopAPI?.notifyToonSettingsSaved();
+    }, 400);
     return () => clearTimeout(timer);
   }, [toonSettings]);
 

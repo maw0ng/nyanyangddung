@@ -487,6 +487,13 @@ ipcMain.handle("desktop:notifyPresetSaved", () => {
   desktopWindow?.webContents.send("character-preset-updated");
 });
 
+// Desktop <-> Editor Toon Style sync - same relay shape as the
+// CharacterPreset one above, kept separate since Toon Style is an
+// app-wide localStorage preference (toonStyle.ts), not CharacterPreset.
+ipcMain.handle("desktop:notifyToonSettingsSaved", () => {
+  desktopWindow?.webContents.send("toon-settings-updated");
+});
+
 app.whenReady().then(() => {
   createTray();
   createDesktopWindow();

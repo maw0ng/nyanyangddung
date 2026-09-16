@@ -51,6 +51,18 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     return () => ipcRenderer.removeListener("character-preset-updated", listener);
   },
 
+  // Desktop <-> Editor Toon Style sync - identical shape/convention to the
+  // CharacterPreset sync pair above, kept as its own separate signal since
+  // Toon Style is an app-wide preference (localStorage, toonStyle.ts), not
+  // part of CharacterPreset. No settings data crosses this bridge either -
+  // both windows already read/write the same localStorage directly.
+  notifyToonSettingsSaved: () => ipcRenderer.invoke("desktop:notifyToonSettingsSaved"),
+  onToonSettingsUpdated: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("toon-settings-updated", listener);
+    return () => ipcRenderer.removeListener("toon-settings-updated", listener);
+  },
+
   // Avatar Scale - still thin IPC passthroughs, all business logic (anchor
   // math, workArea clamping, persistence) lives in main.ts's
   // applyAvatarScale(). resizeAvatarWindow is meant to be called

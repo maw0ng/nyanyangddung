@@ -119,12 +119,19 @@ export default function DesktopAvatarScene() {
   // regardless of what the user tuned in the Avatar Editor's Toon Style
   // panel, since that panel never persisted its settings anywhere at all.
   // Now reads the same app-wide localStorage preference the Editor saves to
-  // (toonStyle.ts's loadToonSettings/saveToonSettings) - read once at
-  // mount, matching how Desktop already picks up everything else (avatar
-  // appearance, scale, ...) as of its own last launch/save rather than
-  // live-reactively while running.
-  const [toonSettings] = useState(() => loadToonSettings());
-
+  // (toonStyle.ts's loadToonSettings/saveToonSettings), AND live-refreshes
+  // (second bug fix - "동기화가 안돼") whenever the Editor notifies a change,
+  // through the exact same notify/listen shape CharacterPreset sync already
+  // uses (desktopAPI.notifyToonSettingsSaved() -> "toon-settings-updated"),
+  // just kept as its own separate signal since Toon Style isn't part of
+  // CharacterPreset. Absent outside Electron, same as the preset listener.
+  const [toonSettings, setToonSettings] = useState(() => loadToonSettings());
+  useEffect(() => {
+    if (!window.desktopAPI?.onToonSettingsUpdated) return;
+    return window.desktopAPI.onToonSettingsUpdated(() => {
+      setToonSettings(loadToonSettings());
+    });
+  }, []);
   // ---- Cosmetics (액세서리/귀) - display-only reflection of the active
   // CharacterPreset's equipped ear (section 17). Renders the EXACT same
   // reusable CosmeticAttachmentScene/CosmeticPaintScene components the
