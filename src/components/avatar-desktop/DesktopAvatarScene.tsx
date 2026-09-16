@@ -139,6 +139,9 @@ export default function DesktopAvatarScene() {
   // never re-fires either, silently dropping a same-cosmetic transform/
   // paint-only edit).
   const lastAppliedCosmeticIdRef = useRef<string | null>(null);
+  // Race-condition guard for loadActiveCharacter (rapid consecutive saves) -
+  // see its own doc comment.
+  const loadRequestSeqRef = useRef(0);
 
   const handleCosmeticAttachmentChange = useCallback(() => {
     const transform = equippedCosmeticTransformRef.current;
@@ -489,11 +492,21 @@ export default function DesktopAvatarScene() {
   // AnimationMixer/TimerEngine/GrowthEngine/drag state, which live in
   // entirely separate objects (section 19/27 of the Editor sync brief).
   const loadActiveCharacter = useCallback(async () => {
+    // Race-condition guard (rapid consecutive saves - e.g. autosave firing
+    // twice in quick succession): each call claims the next sequence
+    // number, and bails out after every await if a NEWER call has since
+    // started, so a slower/older load can never clobber a faster/newer one
+    // that already landed. No version/revision field on CharacterPreset
+    // itself is needed - "did a newer loadActiveCharacter start after me"
+    // is exactly the ordering this needs to preserve.
+    const mySeq = ++loadRequestSeqRef.current;
     const activeId = characterPresetStorage.getActiveCharacterId();
     const list = await characterPresetStorage.listCharacters();
+    if (loadRequestSeqRef.current !== mySeq) return;
     const target = (activeId && list.find((c) => c.id === activeId)) || list[0] || null;
     if (!target) return;
     const record = await characterPresetStorage.getCharacter(target.id);
+    if (loadRequestSeqRef.current !== mySeq) return;
     if (!record) return;
     const { appearance } = record;
     await Promise.all([
@@ -507,6 +520,7 @@ export default function DesktopAvatarScene() {
       topsSceneRef.current?.applyPreset({ materials: appearance.clothing.materials }) ??
         Promise.resolve(),
     ]);
+    if (loadRequestSeqRef.current !== mySeq) return;
     // Never crashes on an older/partial CharacterPreset - same defensive
     // fallback HairPaintPrototype's applyCharacterAppearance uses.
     faceSceneRef.current?.setMorphValues(appearance.morphValues ?? {});
