@@ -40,6 +40,7 @@ const EMPTY: CoWorkRoomState = { room: null, members: [], loading: true, error: 
 export function useCoWorkRoom(userId: string | null) {
   const [state, setState] = useState<CoWorkRoomState>(EMPTY);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  const ownMembershipUnsubscribeRef = useRef<(() => void) | null>(null);
   const lastRoomIdRef = useRef<string | null>(null);
   const refreshRef = useRef<() => void>(() => {});
 
@@ -108,6 +109,8 @@ export function useCoWorkRoom(userId: string | null) {
     // visible under a new one (mirrors useFriendsData's own section-47
     // reset-on-userId-change convention).
     stopSubscription();
+    ownMembershipUnsubscribeRef.current?.();
+    ownMembershipUnsubscribeRef.current = null;
     lastRoomIdRef.current = null;
     if (!userId) {
       setState({ room: null, members: [], loading: false, error: null, endedNotice: false });
@@ -115,7 +118,24 @@ export function useCoWorkRoom(userId: string | null) {
     }
     setState((prev) => ({ ...prev, loading: true, error: null }));
     void refresh();
-    return () => stopSubscription();
+    // Bug fix ("CoWork 최초 입장 시 친구 캐릭터가 바로 나타나지 않음"): this
+    // hook instance is one of potentially several independent instances
+    // across separate Electron windows (Desktop + CoWork - see this hook's
+    // own doc comment). Subscribing to THIS user's own membership row the
+    // moment userId is known - not only once a room is already known, like
+    // subscribeToRoom above - is what lets the DESKTOP window discover a
+    // room that was just created/joined from the separate CoWork window,
+    // without waiting for an app restart to re-run the initial fetch.
+    ownMembershipUnsubscribeRef.current = coworkRoomService.subscribeToOwnMembership(userId, () => {
+      devLog("[CoWork] own membership changed - refreshing");
+      refreshRef.current();
+    });
+    devLog("[CoWork] own membership subscribed user=", userId);
+    return () => {
+      stopSubscription();
+      ownMembershipUnsubscribeRef.current?.();
+      ownMembershipUnsubscribeRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 

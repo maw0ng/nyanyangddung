@@ -67,7 +67,7 @@ import { profileService } from "../../lib/supabase/profileService";
 import { useCoWorkRoom } from "../../lib/supabase/useCoWorkRoom";
 import CoWorkMenuSection from "./cowork/CoWorkMenuSection";
 import { useDesktopParticipants } from "./cowork/desktopParticipant";
-import DesktopParticipantGrid from "./cowork/DesktopParticipantGrid";
+import DesktopParticipantGrid, { type DesktopParticipantGridHandle } from "./cowork/DesktopParticipantGrid";
 import { computeLocalSlotOrigin } from "./cowork/desktopParticipantLayout";
 import { useCoworkTimerSync } from "./cowork/useCoworkTimerSync";
 import { useCoworkRoomStates } from "./cowork/useCoworkRoomStates";
@@ -111,6 +111,14 @@ export default function DesktopAvatarScene() {
   const faceSceneRef = useRef<FacePaintSceneHandle>(null);
   const topsSceneRef = useRef<TopsPaintSceneHandle>(null);
   const animationSceneRef = useRef<AvatarAnimationSceneHandle>(null);
+  // Free-placement (feature request - "자신의 캐릭터... 마우스로 직접
+  // 드래그해서 원하는 위치로 옮길 수 있게") - DesktopParticipantGrid owns the
+  // actual per-participant layout state/DOM, but Local's own interaction
+  // layer (DesktopInteractionLayer, below) lives inside `localSlotContent`,
+  // a sibling subtree rendered INSIDE that grid rather than a child of it -
+  // this ref is how Local's drag gesture reaches the grid's imperative
+  // position-update methods.
+  const participantGridRef = useRef<DesktopParticipantGridHandle>(null);
 
   const [faceDebugInfo, setFaceDebugInfo] = useState<FaceDebugInfo>(INITIAL_FACE_DEBUG_INFO);
   const [topsMaterialNames, setTopsMaterialNames] = useState<string[]>([]);
@@ -771,6 +779,15 @@ export default function DesktopAvatarScene() {
             onCharacterHoverChange={setCharacterHover}
             onDraggingChange={setDragging}
             onCharacterClick={handleCharacterClick}
+            // Free-placement (feature request): a CoWork Room being active is
+            // what actually determines whether dragging your own avatar
+            // repositions it within the grid ("layout") or drags the whole
+            // BrowserWindow ("window", solo Desktop's original, unchanged
+            // behavior - section 33's regression list). Never both from the
+            // same gesture (section 15).
+            dragMode={coworkRoom.room ? "layout" : "window"}
+            onLayoutDragMove={(dx, dy) => participantGridRef.current?.applyLocalDragDelta(dx, dy)}
+            onLayoutDragEnd={() => participantGridRef.current?.commitLocalDrag()}
             onDebugUpdate={isDevBuild ? setInteractionDebug : undefined}
           />
         </Suspense>
@@ -800,10 +817,12 @@ export default function DesktopAvatarScene() {
       */}
       <div style={{ position: "absolute", top: 0, left: 0 }}>
         <DesktopParticipantGrid
+          ref={participantGridRef}
           participants={participants}
           memberStates={memberStates}
           appearances={appearances}
           layout={layout}
+          roomId={coworkRoom.room?.id ?? null}
           localSlotContent={localSlotContent}
           onRemoteHoverChange={setRemoteHover}
           onRemoteDraggingChange={setRemoteDragging}

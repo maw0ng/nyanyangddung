@@ -44,6 +44,8 @@ export default function RemoteAvatarCanvas({
   hudScale,
   onHoverChange,
   onDraggingChange,
+  onDragMove,
+  onDragEnd,
 }: {
   participant: DesktopParticipant;
   /** This participant's current CoWork public timer state (or `null` -
@@ -71,6 +73,11 @@ export default function RemoteAvatarCanvas({
   hudScale: number;
   onHoverChange: (hovering: boolean) => void;
   onDraggingChange: (dragging: boolean) => void;
+  /** Free-placement bug/feature - screen-space drag delta / end for THIS
+   * participant's own layout position (see DesktopParticipantGrid.tsx,
+   * which owns the actual position state and applies these). */
+  onDragMove: (dx: number, dy: number) => void;
+  onDragEnd: () => void;
 }) {
   const instanceRef = useRef<RemoteAvatarInstanceHandle>(null);
   const [popupOpen, setPopupOpen] = useState(false);
@@ -101,6 +108,8 @@ export default function RemoteAvatarCanvas({
             instanceRef={instanceRef}
             onHoverChange={onHoverChange}
             onDraggingChange={onDraggingChange}
+            onDragMove={onDragMove}
+            onDragEnd={onDragEnd}
             onClick={() => setPopupOpen((prev) => !prev)}
           />
         </Canvas>

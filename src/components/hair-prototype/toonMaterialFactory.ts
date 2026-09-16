@@ -10,6 +10,30 @@ import { effectiveFloor, getGradientMap, type MaterialCategory, type ToonSetting
  * `texture.needsUpdate = true` on that same Texture object, the Toon
  * material picks it up automatically - no resync step needed.
  */
+/** HairCanvas is a transparent-background decal wrapping the whole head
+ * (no opaque base texture of its own - see LayerStackEngine's `null`
+ * original in MiniWaffleHairScene.tsx), so it only ever looks right with
+ * these exact material flags. Local's own raw material already carries
+ * them (MiniWaffleHairScene.tsx's wiring effect sets them directly on the
+ * source material before Toon ever wraps it), so enforcing them here again
+ * is a no-op for Local. Remote's raw material (remoteAvatarLoader.ts's
+ * plain GLTFLoader parse) never goes through that wiring effect at all, so
+ * without this, `createToonMaterial` copied the GLB's own defaults -
+ * transparent:false/depthWrite:true/side:FrontSide - straight onto the
+ * Remote Hair material, rendering its "empty" (alpha=0) UV regions as an
+ * OPAQUE flat-color dome instead of see-through (the reported "gray
+ * blob"/"transparency not applied" bug). Centralizing the override here,
+ * in the one function both Local (via ToonStyleController) and Remote (via
+ * RemoteAvatarInstance) call to build their Hair Toon material, is what
+ * actually makes this a single shared pipeline instead of two Hair
+ * implementations that can silently drift apart again. */
+const HAIR_MATERIAL_OVERRIDES = {
+  transparent: true,
+  alphaTest: 0.02,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+} as const;
+
 export function createToonMaterial(
   source: THREE.Material,
   category: MaterialCategory,
@@ -18,14 +42,15 @@ export function createToonMaterial(
   const std = source as THREE.MeshStandardMaterial;
   const floor = effectiveFloor(category, settings.shadowStrength);
   const gradientMap = getGradientMap(settings.shadeSteps, floor);
+  const isHair = category === "hair";
   const toon = new THREE.MeshToonMaterial({
     map: std.map ?? null,
     color: std.color ? std.color.clone() : new THREE.Color(0xffffff),
-    transparent: !!std.transparent,
+    transparent: isHair ? HAIR_MATERIAL_OVERRIDES.transparent : !!std.transparent,
     opacity: std.opacity ?? 1,
-    alphaTest: std.alphaTest ?? 0,
-    side: std.side ?? THREE.FrontSide,
-    depthWrite: std.depthWrite ?? true,
+    alphaTest: isHair ? HAIR_MATERIAL_OVERRIDES.alphaTest : std.alphaTest ?? 0,
+    side: isHair ? HAIR_MATERIAL_OVERRIDES.side : std.side ?? THREE.FrontSide,
+    depthWrite: isHair ? HAIR_MATERIAL_OVERRIDES.depthWrite : std.depthWrite ?? true,
     gradientMap,
   });
   // Keep the exact same name as the source material (not a "__toon"

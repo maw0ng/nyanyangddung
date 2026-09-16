@@ -17,24 +17,32 @@ import type { RemoteAvatarInstanceHandle } from "./RemoteAvatarInstance";
  * via `instanceRef.current.getInteractiveMeshes()` (empty/no-op until that
  * instance's async template has finished loading and cloning).
  *
- * Click vs drag (section 24/25): any avatar - local OR remote - drags the
- * WHOLE BrowserWindow (never an individual Avatar's own position), so a
- * drag detected here calls the exact same
- * desktopAPI.beginWindowDrag/updateWindowDrag/endWindowDrag IPC calls
- * DesktopInteractionLayer already uses. A plain click (no drag) reports
- * onClick instead, for the parent to show the Participant Popup (section
- * 26) - never the Local Floating Menu (section 27 - that only ever opens
- * from Local's OWN interaction layer).
+ * Click vs drag (free-placement bug/feature request - "다른 사람 캐릭터를
+ * 내 화면에서 자유롭게 이동"): a drag detected here reports screen-space
+ * pixel deltas via `onDragMove`/`onDragEnd` for the PARENT
+ * (DesktopParticipantGrid) to apply to this participant's own layout
+ * position - it never touches `window.desktopAPI` at all (a remote
+ * avatar's drag must never move the Electron BrowserWindow, which would
+ * drag every OTHER avatar along with it too). A plain click (no drag)
+ * reports onClick instead, for the parent to show the Participant Popup
+ * (section 26) - never the Local Floating Menu (section 27 - that only
+ * ever opens from Local's OWN interaction layer).
  */
 export default function RemoteAvatarInteractionLayer({
   instanceRef,
   onHoverChange,
   onDraggingChange,
+  onDragMove,
+  onDragEnd,
   onClick,
 }: {
   instanceRef: React.RefObject<RemoteAvatarInstanceHandle>;
   onHoverChange: (hovering: boolean) => void;
   onDraggingChange: (dragging: boolean) => void;
+  /** Screen-space pixel delta since the last call (never accumulated
+   * server-side, never touches the network - see coworkLocalLayoutStorage.ts). */
+  onDragMove: (dx: number, dy: number) => void;
+  onDragEnd: () => void;
   onClick: () => void;
 }) {
   const { camera, gl, raycaster } = useThree();
@@ -42,10 +50,14 @@ export default function RemoteAvatarInteractionLayer({
 
   const onHoverChangeRef = useRef(onHoverChange);
   const onDraggingChangeRef = useRef(onDraggingChange);
+  const onDragMoveRef = useRef(onDragMove);
+  const onDragEndRef = useRef(onDragEnd);
   const onClickRef = useRef(onClick);
   useEffect(() => {
     onHoverChangeRef.current = onHoverChange;
     onDraggingChangeRef.current = onDraggingChange;
+    onDragMoveRef.current = onDragMove;
+    onDragEndRef.current = onDragEnd;
     onClickRef.current = onClick;
   });
 
@@ -56,6 +68,7 @@ export default function RemoteAvatarInteractionLayer({
     let pointerDownOnAvatar = false;
     let dragging = false;
     let dragAccum = { x: 0, y: 0 };
+    let frameDelta = { x: 0, y: 0 };
     let dragUpdateScheduled = false;
 
     function raycastHitsAvatar(clientX: number, clientY: number): boolean {
@@ -79,7 +92,9 @@ export default function RemoteAvatarInteractionLayer({
       dragUpdateScheduled = true;
       requestAnimationFrame(() => {
         dragUpdateScheduled = false;
-        window.desktopAPI?.updateWindowDrag(dragAccum.x, dragAccum.y);
+        const { x, y } = frameDelta;
+        frameDelta = { x: 0, y: 0 };
+        if (x !== 0 || y !== 0) onDragMoveRef.current(x, y);
       });
     }
 
@@ -93,8 +108,8 @@ export default function RemoteAvatarInteractionLayer({
 
     function handlePointerMove(e: PointerEvent) {
       if (dragging) {
-        dragAccum.x += e.movementX;
-        dragAccum.y += e.movementY;
+        frameDelta.x += e.movementX;
+        frameDelta.y += e.movementY;
         scheduleDragUpdate();
         return;
       }
@@ -108,8 +123,9 @@ export default function RemoteAvatarInteractionLayer({
         if (distance > DRAG_THRESHOLD_PX) {
           dragging = true;
           onDraggingChangeRef.current(true);
-          window.desktopAPI?.beginWindowDrag();
-          scheduleDragUpdate();
+          // The accumulated pre-threshold delta counts as the first move
+          // too, so the avatar doesn't visually "jump" once dragging starts.
+          onDragMoveRef.current(dragAccum.x, dragAccum.y);
         }
       }
     }
@@ -120,7 +136,7 @@ export default function RemoteAvatarInteractionLayer({
       if (dragging) {
         dragging = false;
         onDraggingChangeRef.current(false);
-        window.desktopAPI?.endWindowDrag();
+        onDragEndRef.current();
       } else if (pointerDownOnAvatar) {
         onClickRef.current();
       }
@@ -131,7 +147,7 @@ export default function RemoteAvatarInteractionLayer({
       if (dragging) {
         dragging = false;
         onDraggingChangeRef.current(false);
-        window.desktopAPI?.endWindowDrag();
+        onDragEndRef.current();
       }
       pointerDownOnAvatar = false;
     }

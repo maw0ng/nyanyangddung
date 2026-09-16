@@ -49,6 +49,19 @@ interface DesktopInteractionLayerProps {
   onCharacterHoverChange: (hovering: boolean) => void;
   onDraggingChange: (dragging: boolean) => void;
   onCharacterClick: () => void;
+  /** "window" (default, solo Desktop's original behavior - zero regression)
+   * drags the whole Electron BrowserWindow via desktopAPI, exactly as
+   * before. "layout" (CoWork free-placement bug/feature - "자신의 캐릭터...
+   * 마우스로 직접 드래그해서 원하는 위치로 옮길 수 있게") instead reports
+   * screen-space deltas through onLayoutDragMove/onLayoutDragEnd for the
+   * parent to apply to Local's own grid-cell position only - it never calls
+   * window.desktopAPI at all in this mode, so dragging your own avatar in a
+   * CoWork room can never also drag the window underneath every other
+   * participant's avatar too (PART 15's "한 번의 drag로 Avatar도 이동 +
+   * Electron window도 이동하면 안 된다"). */
+  dragMode: "window" | "layout";
+  onLayoutDragMove?: (dx: number, dy: number) => void;
+  onLayoutDragEnd?: () => void;
   onDebugUpdate?: (info: DesktopInteractionDebugInfo) => void;
 }
 
@@ -69,6 +82,9 @@ export default function DesktopInteractionLayer({
   onCharacterHoverChange,
   onDraggingChange,
   onCharacterClick,
+  dragMode,
+  onLayoutDragMove,
+  onLayoutDragEnd,
   onDebugUpdate,
 }: DesktopInteractionLayerProps) {
   const gltf = useGLTF(MODEL_URL);
@@ -82,12 +98,18 @@ export default function DesktopInteractionLayer({
   const onCharacterHoverChangeRef = useRef(onCharacterHoverChange);
   const onDraggingChangeRef = useRef(onDraggingChange);
   const onCharacterClickRef = useRef(onCharacterClick);
+  const dragModeRef = useRef(dragMode);
+  const onLayoutDragMoveRef = useRef(onLayoutDragMove);
+  const onLayoutDragEndRef = useRef(onLayoutDragEnd);
   const onDebugUpdateRef = useRef(onDebugUpdate);
   useEffect(() => {
     menuOpenRef.current = menuOpen;
     onCharacterHoverChangeRef.current = onCharacterHoverChange;
     onDraggingChangeRef.current = onDraggingChange;
     onCharacterClickRef.current = onCharacterClick;
+    dragModeRef.current = dragMode;
+    onLayoutDragMoveRef.current = onLayoutDragMove;
+    onLayoutDragEndRef.current = onLayoutDragEnd;
     onDebugUpdateRef.current = onDebugUpdate;
   });
 
@@ -120,6 +142,7 @@ export default function DesktopInteractionLayer({
     let pointerDownOnCharacter = false;
     let dragging = false;
     let dragAccum = { x: 0, y: 0 };
+    let frameDelta = { x: 0, y: 0 };
     let dragUpdateScheduled = false;
 
     function raycastHitsCharacter(clientX: number, clientY: number): boolean {
@@ -153,7 +176,13 @@ export default function DesktopInteractionLayer({
       dragUpdateScheduled = true;
       requestAnimationFrame(() => {
         dragUpdateScheduled = false;
-        window.desktopAPI?.updateWindowDrag(dragAccum.x, dragAccum.y);
+        if (dragModeRef.current === "layout") {
+          const { x, y } = frameDelta;
+          frameDelta = { x: 0, y: 0 };
+          if (x !== 0 || y !== 0) onLayoutDragMoveRef.current?.(x, y);
+        } else {
+          window.desktopAPI?.updateWindowDrag(dragAccum.x, dragAccum.y);
+        }
       });
     }
 
@@ -170,6 +199,8 @@ export default function DesktopInteractionLayer({
       if (dragging) {
         dragAccum.x += e.movementX;
         dragAccum.y += e.movementY;
+        frameDelta.x += e.movementX;
+        frameDelta.y += e.movementY;
         scheduleDragUpdate();
         return;
       }
@@ -183,10 +214,19 @@ export default function DesktopInteractionLayer({
         if (distance > DRAG_THRESHOLD_PX) {
           dragging = true;
           onDraggingChangeRef.current(true);
-          window.desktopAPI?.beginWindowDrag();
-          // Apply the already-accumulated delta immediately so the window
-          // doesn't visually "jump" once it starts tracking.
-          scheduleDragUpdate();
+          if (dragModeRef.current === "layout") {
+            // Already-accumulated pre-threshold delta counts as the first
+            // move too, so the avatar doesn't visually "jump" once dragging
+            // starts - mirrors the "window" branch's own scheduleDragUpdate
+            // call just below for the same reason.
+            onLayoutDragMoveRef.current?.(dragAccum.x, dragAccum.y);
+            frameDelta = { x: 0, y: 0 };
+          } else {
+            window.desktopAPI?.beginWindowDrag();
+            // Apply the already-accumulated delta immediately so the window
+            // doesn't visually "jump" once it starts tracking.
+            scheduleDragUpdate();
+          }
           reportDebug();
         }
       }
@@ -198,7 +238,8 @@ export default function DesktopInteractionLayer({
       if (dragging) {
         dragging = false;
         onDraggingChangeRef.current(false);
-        window.desktopAPI?.endWindowDrag();
+        if (dragModeRef.current === "layout") onLayoutDragEndRef.current?.();
+        else window.desktopAPI?.endWindowDrag();
       } else if (pointerDownOnCharacter) {
         onCharacterClickRef.current();
       }
@@ -210,7 +251,8 @@ export default function DesktopInteractionLayer({
       if (dragging) {
         dragging = false;
         onDraggingChangeRef.current(false);
-        window.desktopAPI?.endWindowDrag();
+        if (dragModeRef.current === "layout") onLayoutDragEndRef.current?.();
+        else window.desktopAPI?.endWindowDrag();
       }
       pointerDownOnCharacter = false;
       reportDebug();

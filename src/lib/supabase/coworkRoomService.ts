@@ -197,4 +197,38 @@ export const coworkRoomService = {
       void supabase.removeChannel(channel);
     };
   },
+
+  /** THIS caller's own `cowork_room_members` rows, independent of any
+   * specific room (bug fix - "CoWork 최초 입장 시 친구 캐릭터가 바로 나타나지
+   * 않음"). Desktop and CoWork are separate Electron BrowserWindows, each
+   * running its own independent `useCoWorkRoom` instance/subscription (see
+   * that hook's own doc comment) - there is no shared in-memory state
+   * between them. `subscribeToRoom` above only starts listening once a
+   * caller already knows a roomId, which is exactly the piece the DESKTOP
+   * window never had: when the user creates/joins a room from the CoWork
+   * window, only THAT window's own hook instance learns about it locally;
+   * Desktop's separate instance had no room yet, so it was never
+   * subscribed to anything, and had no way to find out - until the next
+   * app restart re-ran its initial `getActiveRoom()` fetch from scratch.
+   * Subscribing to "my own membership" the moment `userId` is known (before
+   * any room is known) closes that gap with real Realtime delivery, not a
+   * poll/timer - the instant this user's own `cowork_room_members` row is
+   * inserted/updated/deleted (create, join, leave, kick, room-ended), every
+   * window's hook instance calls `onChange` and re-runs its own initial
+   * fetch for whatever room now applies. */
+  subscribeToOwnMembership(userId: string, onChange: () => void): () => void {
+    const supabase = getSupabaseClient();
+    if (!supabase) return () => {};
+    const channel = supabase
+      .channel(`cowork_own_membership:${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "cowork_room_members", filter: `user_id=eq.${userId}` },
+        onChange
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  },
 };
