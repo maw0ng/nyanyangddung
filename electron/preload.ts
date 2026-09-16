@@ -51,6 +51,22 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     return () => ipcRenderer.removeListener("character-preset-updated", listener);
   },
 
+  // Editor-close autosave flush (bug fix - a pending 1.5s-debounced
+  // autosave was silently lost if the Editor window closed before it
+  // fired). Main intercepts the window's close event and sends
+  // "editor:flush-before-close"; the Editor calls this with an async
+  // callback that cancels the debounce and awaits the real save, then
+  // reports back via "editor:flush-before-close-done" so Main can finish
+  // closing the window. Bounded by a timeout on Main's side regardless
+  // (see main.ts) - never an indefinite wait.
+  onFlushBeforeClose: (callback: () => Promise<void>) => {
+    const listener = () => {
+      void callback().finally(() => ipcRenderer.send("editor:flush-before-close-done"));
+    };
+    ipcRenderer.on("editor:flush-before-close", listener);
+    return () => ipcRenderer.removeListener("editor:flush-before-close", listener);
+  },
+
   // Desktop <-> Editor Toon Style sync - identical shape/convention to the
   // CharacterPreset sync pair above, kept as its own separate signal since
   // Toon Style is an app-wide preference (localStorage, toonStyle.ts), not

@@ -73,6 +73,15 @@ declare global {
      * function; call it on unmount like any other event subscription. */
     onCharacterPresetUpdated: (callback: () => void) => () => void;
 
+    /** Editor-only: registers the async flush callback Main invokes right
+     * before actually closing the Editor window, so a pending debounced
+     * autosave gets a chance to complete (cancel the timer, await the real
+     * IndexedDB write) instead of being silently discarded when the window
+     * closes mid-debounce. Returns an unsubscribe function. Main bounds the
+     * wait with its own timeout - this callback should still resolve
+     * promptly rather than assuming it will always be awaited indefinitely. */
+    onFlushBeforeClose: (callback: () => Promise<void>) => () => void;
+
     /** Called by the Editor window after its (debounced) Toon Style save
      * to localStorage settles - relayed to the Desktop window as a
      * "toon-settings-updated" event. Carries no settings data itself (see

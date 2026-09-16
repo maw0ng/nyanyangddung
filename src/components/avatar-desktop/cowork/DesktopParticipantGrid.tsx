@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import type { DesktopAvatarLayout } from "../desktopAvatarLayout";
-import { assignParticipantGrid, GRID_GAP } from "./desktopParticipantLayout";
+import { flattenParticipantGrid } from "./desktopParticipantLayout";
 import type { DesktopParticipant } from "./desktopParticipant";
 import RemoteAvatarCanvas from "./RemoteAvatarCanvas";
 import type { CoworkPublicTimerState, NetworkAppearanceManifest } from "../../../lib/supabase/database.types";
@@ -91,36 +91,41 @@ export default function DesktopParticipantGrid({
     if (draggingChanged) onRemoteDraggingChange(draggingSetRef.current.size > 0);
   }, [participants, onRemoteHoverChange, onRemoteDraggingChange]);
 
-  const { rows } = assignParticipantGrid(participants);
+  // Flat, single-parent placement (bug fix - see flattenParticipantGrid's
+  // own doc comment): every cell below is a DIRECT sibling keyed only by
+  // userId and positioned purely via CSS, so a participant-count change
+  // that moves someone between visual "rows" (e.g. Local moving from row 0
+  // to row 1 when a 3rd participant joins) never reparents - and therefore
+  // never remounts - their scene. This is what actually fixes "Local's own
+  // Hair/Face/Tops/Cosmetic scene goes blank after a room's layout
+  // reshuffles" - the previous nested rows[][] -> per-row <div> structure
+  // silently unmounted/remounted whichever cell crossed a row boundary.
+  const cells = flattenParticipantGrid(participants, layout);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: GRID_GAP }}>
-      {rows.map((row, rowIndex) => (
-        <div key={rowIndex} style={{ display: "flex", gap: GRID_GAP }}>
-          {row.map((cell, cellIndex) =>
-            cell === null ? (
-              <div key={`empty-${rowIndex}-${cellIndex}`} style={{ width: layout.windowWidth }} />
-            ) : cell.isLocalSlot ? (
-              <div key={cell.participant.userId} style={{ width: layout.windowWidth }}>
-                {localSlotContent}
-              </div>
-            ) : (
-              <RemoteAvatarCanvas
-                key={cell.participant.userId}
-                participant={cell.participant}
-                state={memberStates.get(cell.participant.userId) ?? null}
-                appearance={appearances.get(cell.participant.userId) ?? null}
-                width={layout.windowWidth}
-                canvasHeight={layout.canvasHeight}
-                profileStripHeight={layout.profileStripHeight}
-                hudScale={layout.hudScale}
-                onHoverChange={makeHoverHandler(cell.participant.userId)}
-                onDraggingChange={makeDraggingHandler(cell.participant.userId)}
-              />
-            )
+    <>
+      {cells.map((cell) => (
+        <div
+          key={cell.participant.userId}
+          style={{ position: "absolute", left: cell.x, top: cell.y, width: layout.windowWidth }}
+        >
+          {cell.isLocalSlot ? (
+            localSlotContent
+          ) : (
+            <RemoteAvatarCanvas
+              participant={cell.participant}
+              state={memberStates.get(cell.participant.userId) ?? null}
+              appearance={appearances.get(cell.participant.userId) ?? null}
+              width={layout.windowWidth}
+              canvasHeight={layout.canvasHeight}
+              profileStripHeight={layout.profileStripHeight}
+              hudScale={layout.hudScale}
+              onHoverChange={makeHoverHandler(cell.participant.userId)}
+              onDraggingChange={makeDraggingHandler(cell.participant.userId)}
+            />
           )}
         </div>
       ))}
-    </div>
+    </>
   );
 }

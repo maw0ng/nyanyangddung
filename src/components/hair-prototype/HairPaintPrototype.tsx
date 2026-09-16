@@ -31,6 +31,7 @@ import { hairPresetStorage } from "./hairPresetStorage";
 import { facePresetStorage } from "./facePresetStorage";
 import { clothingPresetStorage } from "./clothingPresetStorage";
 import { characterPresetStorage, type CharacterSummary } from "./characterPresetStorage";
+import { devLog } from "../../lib/devLog";
 import { downloadBlob } from "./textureIO";
 import type { PresetMeta } from "./genericPresetStore";
 import type { LayerSummary } from "./layerStackEngine";
@@ -262,7 +263,7 @@ export default function HairPaintPrototype() {
   const initializedRef = useRef(false);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const saveCurrentCharacterRef = useRef<() => void>(() => {});
+  const saveCurrentCharacterRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const avatarMorphsRef = useRef<UseAvatarMorphsResult | null>(null);
 
   const hairMode: Mode = editMode === "hair" ? "draw" : "rotate";
@@ -1003,6 +1004,7 @@ export default function HairPaintPrototype() {
         if (!appearance) throw new Error("scenes not ready");
         const thumbnail = await captureThumbnail();
         await characterPresetStorage.saveCharacter(id, appearance, thumbnail);
+        devLog("[Preset] save committed id=", id);
         setDirty(false);
         setSaveStatus("saved");
         await refreshCharacters();
@@ -1023,6 +1025,28 @@ export default function HairPaintPrototype() {
   useEffect(() => {
     saveCurrentCharacterRef.current = () => saveCurrentCharacter();
   }, [saveCurrentCharacter]);
+
+  // Bug fix ("저장 직후 Editor를 빠르게 닫으면 마지막 수정이 사라짐"): Main
+  // (electron/main.ts) intercepts the Editor window's close and asks this
+  // callback to run before actually closing. If a debounced autosave is
+  // still pending (dirty, timer not yet fired), cancel the timer and
+  // await the real save directly instead - the window only finishes
+  // closing once this resolves (or Main's own bounded timeout elapses,
+  // whichever comes first). Absent outside Electron/on the Desktop window
+  // (no-op there), same optional-chaining convention as every other
+  // desktopAPI listener in this file.
+  useEffect(() => {
+    if (!window.desktopAPI?.onFlushBeforeClose) return;
+    return window.desktopAPI.onFlushBeforeClose(async () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      if (dirty) {
+        await saveCurrentCharacterRef.current();
+      }
+    });
+  }, [dirty]);
 
   const saveCurrentAsNewCharacter = useCallback(
     async (name: string) => {
@@ -1221,6 +1245,7 @@ export default function HairPaintPrototype() {
     initializedRef.current = true;
 
     (async () => {
+      devLog("[Preset] hydration start");
       const list = await characterPresetStorage.listCharacters();
       setCharacters(list);
 
@@ -1233,9 +1258,11 @@ export default function HairPaintPrototype() {
           await applyCharacterAppearance(record.appearance);
           setActiveCharacterIdState(record.id);
           characterPresetStorage.setActiveCharacterId(record.id);
+          devLog("[Preset] hydration complete id=", record.id, "(existing)");
           return;
         }
       }
+      devLog("[Preset] hydration complete - no existing preset found, creating default");
       await createNewCharacter("캐릭터 1");
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

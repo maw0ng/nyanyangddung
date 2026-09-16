@@ -14,6 +14,7 @@ import AvatarAnimationScene, {
 } from "../hair-prototype/AvatarAnimationScene";
 import type { AvatarAnimationState } from "../hair-prototype/avatarAnimation";
 import { characterPresetStorage } from "../hair-prototype/characterPresetStorage";
+import { devLog } from "../../lib/devLog";
 import { loadToonSettings, lightIntensitiesFor } from "../hair-prototype/toonStyle";
 import {
   INITIAL_FACE_DEBUG_INFO,
@@ -517,6 +518,7 @@ export default function DesktopAvatarScene() {
     // itself is needed - "did a newer loadActiveCharacter start after me"
     // is exactly the ordering this needs to preserve.
     const mySeq = ++loadRequestSeqRef.current;
+    devLog("[Preset] hydration start (Desktop)");
     const activeId = characterPresetStorage.getActiveCharacterId();
     const list = await characterPresetStorage.listCharacters();
     if (loadRequestSeqRef.current !== mySeq) return;
@@ -573,6 +575,8 @@ export default function DesktopAvatarScene() {
         equippedCosmeticCustomizationRef.current?.materials ?? {}
       );
     }
+    devLog("[Preset] hydration complete id=", target.id, "(Desktop)");
+    devLog("[Appearance] local preset applied");
   }, []);
 
   // Deferred one macrotask (setTimeout 0) for the same reason
@@ -593,6 +597,7 @@ export default function DesktopAvatarScene() {
     const timer = setTimeout(() => {
       if (loadedRef.current) return;
       loadedRef.current = true;
+      devLog("[Avatar] local mount user=", session?.user.id ?? "(no session)");
       void loadActiveCharacter();
     }, 0);
     return () => clearTimeout(timer);

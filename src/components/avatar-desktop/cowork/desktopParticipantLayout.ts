@@ -128,6 +128,62 @@ export function assignParticipantGrid(participants: DesktopParticipant[]): Parti
   };
 }
 
+export interface PositionedParticipant {
+  participant: DesktopParticipant;
+  isLocalSlot: boolean;
+  x: number;
+  y: number;
+}
+
+/**
+ * Flat, per-participant pixel placement (bug fix - CoWork "내 캐릭터
+ * 머리가 사라짐"). DesktopParticipantGrid used to render assignParticipantGrid's
+ * nested `rows[][]` directly as `rows.map(row => <div key={rowIndex}>
+ * {row.map(cell => <... key={cell.userId}/>)}</div>)`. React only
+ * preserves a keyed child's mounted instance (and all its internal state -
+ * refs, effects, THREE.js objects) when the key is matched WITHIN THE SAME
+ * PARENT across renders. assignParticipantGrid moves Local from row 0 to
+ * row 1 the moment a 3rd participant joins (and back on the 4th leaving) -
+ * a real reparent, not just a reorder - so Local's own <Canvas> (Hair/
+ * Face/Tops/Cosmetic scenes, materials, LayerStackEngine instances) was
+ * silently unmounted and remounted on that specific transition, discarding
+ * every already-wired Hair material and forcing a full, easy-to-race
+ * CharacterPreset re-hydration (see DesktopAvatarScene's loadActiveCharacter)
+ * - exactly the "hair disappears, reappears after touching the Editor"
+ * symptom, since the Editor's own save/switch flow is what re-fires the
+ * reload via notifyPresetSaved.
+ *
+ * Fix: give every participant - local AND remote - the SAME flat list,
+ * one common parent, keyed only by userId, positioned via plain CSS
+ * (absolute x/y, computed with the identical row/column math
+ * assignParticipantGrid and computeLocalSlotOrigin already use) instead of
+ * via nested DOM/component parents. No participant-count transition can
+ * ever reparent anyone this way, so nobody's scene remounts just because
+ * the grid's visual row layout changed shape.
+ */
+export function flattenParticipantGrid(
+  participants: DesktopParticipant[],
+  layout: DesktopAvatarLayout
+): PositionedParticipant[] {
+  const { rows } = assignParticipantGrid(participants);
+  const remoteSlotHeight = layout.profileStripHeight + layout.canvasHeight;
+  const out: PositionedParticipant[] = [];
+  let y = 0;
+  for (const row of rows) {
+    row.forEach((cell, colIndex) => {
+      if (!cell) return;
+      out.push({
+        participant: cell.participant,
+        isLocalSlot: cell.isLocalSlot,
+        x: colIndex * (layout.windowWidth + GRID_GAP),
+        y,
+      });
+    });
+    y += remoteSlotHeight + GRID_GAP;
+  }
+  return out;
+}
+
 /** Pixel offset of the LOCAL slot's own top-left corner within the whole
  * grid (0,0 when there's only 1 participant - section 13's "기존과 최대한
  * 동일"). The Floating Menu (DesktopMenu.tsx) is still anchored relative

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { coworkRoomService } from "./coworkRoomService";
 import type { CoworkResult } from "./coworkRoomService";
 import type { CoworkRoom, CoworkRoomMemberView } from "./database.types";
+import { devLog } from "../devLog";
 
 export interface CoWorkRoomState {
   room: CoworkRoom | null;
@@ -79,6 +80,11 @@ export function useCoWorkRoom(userId: string | null) {
 
     lastRoomIdRef.current = room.id;
     const membersRes = await coworkRoomService.getRoomMembers(room.id);
+    devLog(
+      "[CoWork] initial members count=",
+      membersRes.ok ? membersRes.data.length : "(fetch failed)",
+      membersRes.ok ? "" : membersRes.error
+    );
     setState({
       room,
       members: membersRes.ok ? membersRes.data : [],
@@ -89,6 +95,7 @@ export function useCoWorkRoom(userId: string | null) {
 
     if (!unsubscribeRef.current) {
       unsubscribeRef.current = coworkRoomService.subscribeToRoom(room.id, () => refreshRef.current());
+      devLog("[CoWork] realtime subscribed room=", room.id);
     }
   }, [userId, stopSubscription]);
 

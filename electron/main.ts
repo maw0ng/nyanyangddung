@@ -38,6 +38,35 @@ import { registerUpdaterIpc, setupAutoUpdater } from "./updater";
 const isDev = !app.isPackaged;
 const preloadPath = path.join(__dirname, "preload.js");
 
+// Single-instance lock (bug fix - "일부 사용자만 앱 재실행 후 커스텀이
+// 초기화됨"): staticServer.ts pins its HTTP server to a FIXED port
+// specifically so the packaged app's origin (and therefore every
+// origin-scoped storage - IndexedDB CharacterPreset, localStorage
+// activeCharacterId/Supabase session/toonSettings) stays identical across
+// launches, with an explicit, already-documented fallback to a random
+// OS-assigned port if that fixed port is unavailable. Without a
+// single-instance lock, a user launching the app a second time (e.g.
+// double-clicking the desktop shortcut again without realizing it's
+// already running hidden in the Tray - this app's whole "숨기기" feature
+// makes that easy to do unknowingly) starts a SECOND process that hits
+// exactly that EADDRINUSE case, since the first process is still holding
+// the fixed port - the second process then silently falls back to a
+// random port, gets a brand-new origin, and sees completely empty
+// IndexedDB/localStorage. If the user then closes what they think is "the
+// app" (actually just one of the two windows) and keeps using the other,
+// their custom CharacterPreset looks like it was wiped - exactly this bug,
+// and only for users who happen to relaunch while already running, which
+// matches "일부 사용자에게만" precisely. Electron's standard fix: the
+// SECOND process requests the lock, fails (a first process already holds
+// it), and quits immediately instead of ever reaching app.whenReady() at
+// all - so a second static server on a divergent origin can never start in
+// the first place. The first process's own 'second-instance' handler just
+// brings the existing window back instead.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
 let desktopWindow: BrowserWindow | null = null;
 let editorWindow: BrowserWindow | null = null;
 let friendsWindow: BrowserWindow | null = null;
@@ -260,6 +289,27 @@ async function createDesktopWindow() {
   });
 }
 
+/** Bounded wait for the Editor's pending-autosave flush before it actually
+ * closes (bug fix - "저장 직후 Editor를 빠르게 닫으면 마지막 수정이
+ * 사라짐"). HairPaintPrototype.tsx's autosave is a plain 1.5s debounce
+ * timer; if the user edits something and closes the Editor window before
+ * that timer fires, the whole renderer process is torn down with the
+ * window and the pending setTimeout simply never runs - the edit is lost
+ * even though CharacterPreset was otherwise correctly saved every other
+ * time. Never allow the FIRST close attempt through directly: intercept
+ * it, ask the renderer to flush (cancel the debounce and await the actual
+ * IndexedDB write) via this same request/response round trip, and only
+ * then let the window actually close - but bounded by a timeout (never the
+ * "wait on an async IndexedDB write forever" anti-pattern), so a renderer
+ * that's hung/unresponsive can still be closed. */
+const EDITOR_CLOSE_FLUSH_TIMEOUT_MS = 3000;
+let editorCloseFlushResolve: (() => void) | null = null;
+
+ipcMain.on("editor:flush-before-close-done", () => {
+  editorCloseFlushResolve?.();
+  editorCloseFlushResolve = null;
+});
+
 function focusOrCreateEditorWindow() {
   if (editorWindow && !editorWindow.isDestroyed()) {
     editorWindow.focus();
@@ -276,6 +326,22 @@ function focusOrCreateEditorWindow() {
     },
   });
   resolveUrl(EDITOR_ROUTE).then((url) => editorWindow?.loadURL(url));
+
+  let closeConfirmed = false;
+  editorWindow.on("close", (event) => {
+    if (closeConfirmed || !editorWindow) return;
+    event.preventDefault();
+    const win = editorWindow;
+    const finishClose = () => {
+      if (closeConfirmed) return;
+      closeConfirmed = true;
+      editorCloseFlushResolve = null;
+      win.close();
+    };
+    editorCloseFlushResolve = finishClose;
+    win.webContents.send("editor:flush-before-close");
+    setTimeout(finishClose, EDITOR_CLOSE_FLUSH_TIMEOUT_MS);
+  });
   editorWindow.on("closed", () => {
     editorWindow = null;
   });
@@ -494,16 +560,30 @@ ipcMain.handle("desktop:notifyToonSettingsSaved", () => {
   desktopWindow?.webContents.send("toon-settings-updated");
 });
 
-app.whenReady().then(() => {
-  createTray();
-  createDesktopWindow();
-  registerUpdaterIpc();
-  setupAutoUpdater();
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createDesktopWindow();
-  });
+// Fires in THIS (first) process when a second launch attempt is blocked by
+// the lock above - bring the existing Desktop window back rather than
+// leaving the app looking like it didn't respond to the second launch.
+app.on("second-instance", () => {
+  if (desktopWindow) {
+    desktopWindow.show();
+    if (desktopWindow.isMinimized()) desktopWindow.restore();
+  } else {
+    createDesktopWindow();
+  }
 });
+
+if (gotSingleInstanceLock) {
+  app.whenReady().then(() => {
+    createTray();
+    createDesktopWindow();
+    registerUpdaterIpc();
+    setupAutoUpdater();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createDesktopWindow();
+    });
+  });
+}
 
 app.on("window-all-closed", () => {
   staticServer?.close();

@@ -22,6 +22,7 @@ import {
 import { clearCachedOverlayBitmaps } from "./remoteAppearanceCache";
 import { HEAD_ATTACH_BONE_NAME } from "../../hair-prototype/cosmetics/cosmeticRegistry";
 import type { CoworkPublicTimerState, NetworkAppearanceManifest } from "../../../lib/supabase/database.types";
+import { devLog } from "../../../lib/devLog";
 
 /** Remote Avatars only ever persist in one of these three (section 8/27) -
  * never Sleep/Wave/Celebrate/Stretch (those stay Local-only one-shot/
@@ -231,6 +232,8 @@ function RemoteAvatarInstance(
     cloneRef.current = clone;
     meshesRef.current = meshes;
     clonedMaterialsRef.current = clonedMaterials;
+    devLog("[Avatar] remote mount user=", userId);
+    if (!appearance) devLog("[Appearance] remote fallback (no manifest yet) user=", userId);
   }
 
   // Cleanup (section 43/44): dispose only THIS instance's own mixer and
@@ -278,6 +281,7 @@ function RemoteAvatarInstance(
       .then(() => {
         if (revision <= appliedRevisionRef.current) return;
         appliedRevisionRef.current = revision;
+        devLog("[Appearance] remote revision applied user=", userId, "revision=", revision);
       })
       .catch((err) => {
         console.error("[RemoteAvatarInstance] appearance apply failed", err);
