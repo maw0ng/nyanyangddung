@@ -14,7 +14,7 @@ import AvatarAnimationScene, {
 } from "../hair-prototype/AvatarAnimationScene";
 import type { AvatarAnimationState } from "../hair-prototype/avatarAnimation";
 import { characterPresetStorage } from "../hair-prototype/characterPresetStorage";
-import { DEFAULT_TOON_SETTINGS, lightIntensitiesFor } from "../hair-prototype/toonStyle";
+import { loadToonSettings, lightIntensitiesFor } from "../hair-prototype/toonStyle";
 import {
   INITIAL_FACE_DEBUG_INFO,
   emptyCharacterCosmetics,
@@ -114,6 +114,16 @@ export default function DesktopAvatarScene() {
   const [faceDebugInfo, setFaceDebugInfo] = useState<FaceDebugInfo>(INITIAL_FACE_DEBUG_INFO);
   const [topsMaterialNames, setTopsMaterialNames] = useState<string[]>([]);
   const loadedRef = useRef(false);
+
+  // Toon rendering style (bug fix): previously always DEFAULT_TOON_SETTINGS
+  // regardless of what the user tuned in the Avatar Editor's Toon Style
+  // panel, since that panel never persisted its settings anywhere at all.
+  // Now reads the same app-wide localStorage preference the Editor saves to
+  // (toonStyle.ts's loadToonSettings/saveToonSettings) - read once at
+  // mount, matching how Desktop already picks up everything else (avatar
+  // appearance, scale, ...) as of its own last launch/save rather than
+  // live-reactively while running.
+  const [toonSettings] = useState(() => loadToonSettings());
 
   // ---- Cosmetics (액세서리/귀) - display-only reflection of the active
   // CharacterPreset's equipped ear (section 17). Renders the EXACT same
@@ -605,7 +615,7 @@ export default function DesktopAvatarScene() {
     });
   }, [loadActiveCharacter, markAppearanceDirty]);
 
-  const { ambient, key, fill } = lightIntensitiesFor(DEFAULT_TOON_SETTINGS, 0.8, 1.2, 0.4);
+  const { ambient, key, fill } = lightIntensitiesFor(toonSettings, 0.8, 1.2, 0.4);
 
   // Local's own on-screen slot offset within the (possibly multi-avatar)
   // grid (section 12/17) - 0,0 whenever there's no active Room (identical
@@ -719,7 +729,7 @@ export default function DesktopAvatarScene() {
             onHistoryChange={noopTopsHistory}
             onMaterialsDiscovered={handleTopsMaterialsDiscovered}
           />
-          <ToonStyleController ready={sceneReady} settings={DEFAULT_TOON_SETTINGS} />
+          <ToonStyleController ready={sceneReady} settings={toonSettings} />
           {/* No startInEditMode - Desktop Mode plays Idle immediately,
               unlike the Avatar Editor. */}
           <AvatarAnimationScene ref={animationSceneRef} />

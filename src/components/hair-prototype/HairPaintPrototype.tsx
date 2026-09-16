@@ -21,7 +21,7 @@ import MorphCustomizer from "./MorphCustomizer";
 import { useAvatarMorphs, type UseAvatarMorphsResult } from "./useAvatarMorphs";
 import ToonStyleController from "./ToonStyleController";
 import ToonDebugPanel from "./ToonDebugPanel";
-import { DEFAULT_TOON_SETTINGS, lightIntensitiesFor, type ToonSettings } from "./toonStyle";
+import { loadToonSettings, saveToonSettings, lightIntensitiesFor, type ToonSettings } from "./toonStyle";
 import AvatarAnimationScene, {
   type AvatarAnimationSceneHandle,
 } from "./AvatarAnimationScene";
@@ -219,10 +219,21 @@ export default function HairPaintPrototype() {
   const [morphValues, setMorphValuesState] = useState<Record<string, number>>({});
 
   // ---- Toon rendering style (app-wide, NOT part of CharacterPreset) ------
-  const [toonSettings, setToonSettings] = useState<ToonSettings>(DEFAULT_TOON_SETTINGS);
+  // Persisted to localStorage (bug fix - this used to reset to
+  // DEFAULT_TOON_SETTINGS on every mount/reload with no persistence at
+  // all) - see toonStyle.ts's loadToonSettings/saveToonSettings.
+  const [toonSettings, setToonSettings] = useState<ToonSettings>(() => loadToonSettings());
   const handleToonChange = useCallback((patch: Partial<ToonSettings>) => {
     setToonSettings((prev) => ({ ...prev, ...patch }));
   }, []);
+  // Debounced (not on every single slider tick, which fires onChange
+  // continuously while dragging) - same "live UI updates immediately, disk
+  // write settles shortly after" convention as this file's own CharacterPreset
+  // autosave.
+  useEffect(() => {
+    const timer = setTimeout(() => saveToonSettings(toonSettings), 400);
+    return () => clearTimeout(timer);
+  }, [toonSettings]);
 
   const hairSceneRef = useRef<MiniWaffleHairSceneHandle>(null);
   const faceSceneRef = useRef<FacePaintSceneHandle>(null);

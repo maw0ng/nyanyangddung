@@ -36,6 +36,39 @@ export const DEFAULT_TOON_SETTINGS: ToonSettings = {
   outlineStrength: 0.45,
 };
 
+/** Bug fix: ToonSettings was app-wide-by-design (see the class doc comment
+ * above) but had no actual persistence at all - the Editor's ToonDebugPanel
+ * only ever held it in plain `useState`, reset to DEFAULT_TOON_SETTINGS on
+ * every mount, so any adjustment silently vanished on reload/reopen.
+ * localStorage matches the existing "app-wide, not per-character" intent
+ * exactly (same scope/pattern characterPresetStorage.getActiveCharacterId()
+ * already uses for its own single app-wide preference) - CharacterPreset's
+ * IndexedDB schema is untouched. */
+const TOON_SETTINGS_STORAGE_KEY = "miniwaffle:toonSettings";
+
+/** Never throws and never trusts a partial/stale saved shape blindly - a
+ * field added to ToonSettings after some settings were already saved still
+ * falls back to DEFAULT_TOON_SETTINGS for exactly that field. */
+export function loadToonSettings(): ToonSettings {
+  try {
+    const raw = localStorage.getItem(TOON_SETTINGS_STORAGE_KEY);
+    if (!raw) return DEFAULT_TOON_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<ToonSettings>;
+    return { ...DEFAULT_TOON_SETTINGS, ...parsed };
+  } catch {
+    return DEFAULT_TOON_SETTINGS;
+  }
+}
+
+export function saveToonSettings(settings: ToonSettings) {
+  try {
+    localStorage.setItem(TOON_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // Non-fatal - worst case the preference doesn't survive this session,
+    // same fallback convention as characterPresetStorage's own localStorage use.
+  }
+}
+
 /**
  * Per-Material-category tuning (section 10 of the brief): every material
  * does not get identical shading. FACE/EYE stay near-flat, HAIR gets very
