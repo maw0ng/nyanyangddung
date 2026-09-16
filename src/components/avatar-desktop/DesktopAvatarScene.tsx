@@ -131,6 +131,14 @@ export default function DesktopAvatarScene() {
   const [cosmeticSurfaces, setCosmeticSurfaces] = useState<CosmeticMaterialSurface[]>([]);
   const equippedCosmeticTransformRef = useRef<CosmeticTransform | null>(null);
   const equippedCosmeticCustomizationRef = useRef<CosmeticCustomization | null>(null);
+  // Tracks the cosmeticId `loadActiveCharacter` applied LAST time (bug fix -
+  // see the reapply branch inside loadActiveCharacter below for why this is
+  // needed: `setEquippedCosmeticId` below is a no-op re-render-wise when the
+  // id is unchanged from before, so CosmeticAttachmentScene's own attach
+  // effect - the ONLY other place that calls setTransform/applyPreset -
+  // never re-fires either, silently dropping a same-cosmetic transform/
+  // paint-only edit).
+  const lastAppliedCosmeticIdRef = useRef<string | null>(null);
 
   const handleCosmeticAttachmentChange = useCallback(() => {
     const transform = equippedCosmeticTransformRef.current;
@@ -509,11 +517,31 @@ export default function DesktopAvatarScene() {
     // applyCharacterAppearance).
     const cosmetics = appearance.cosmetics ?? emptyCharacterCosmetics();
     const equippedHead = cosmetics.equipped.head ?? null;
+    const nextCosmeticId = equippedHead?.cosmeticId ?? null;
     equippedCosmeticTransformRef.current = equippedHead?.transform ?? null;
     equippedCosmeticCustomizationRef.current = equippedHead
       ? cosmetics.customizations[equippedHead.cosmeticId] ?? null
       : null;
-    setEquippedCosmeticId(equippedHead?.cosmeticId ?? null);
+
+    // Bug fix (live Editor-save refresh): when the SAME cosmetic stays
+    // equipped across a reload - only its TRS/paint changed - React bails
+    // out of re-rendering on this identical setEquippedCosmeticId call, so
+    // CosmeticAttachmentScene's own [equippedId] attach effect (the only
+    // other thing that ever calls setTransform/applyPreset) never re-fires
+    // either. Re-apply directly against whatever's already attached in that
+    // case; the unchanged-id branch below is a no-op the very first time a
+    // cosmetic is equipped (lastAppliedCosmeticIdRef still null/different),
+    // correctly leaving that fresh attach to the normal reactive path.
+    const sameCosmeticStillEquipped =
+      nextCosmeticId !== null && lastAppliedCosmeticIdRef.current === nextCosmeticId;
+    lastAppliedCosmeticIdRef.current = nextCosmeticId;
+    setEquippedCosmeticId(nextCosmeticId);
+    if (sameCosmeticStillEquipped && equippedHead) {
+      cosmeticAttachmentRef.current?.setTransform(equippedHead.transform);
+      void cosmeticPaintRef.current?.applyPreset(
+        equippedCosmeticCustomizationRef.current?.materials ?? {}
+      );
+    }
   }, []);
 
   // Deferred one macrotask (setTimeout 0) for the same reason

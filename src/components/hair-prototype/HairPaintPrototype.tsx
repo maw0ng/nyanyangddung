@@ -926,7 +926,27 @@ export default function HairPaintPrototype() {
       const cosmetics = appearance.cosmetics ?? emptyCharacterCosmetics();
       cosmeticCustomizationsRef.current = { ...cosmetics.customizations };
       const equipped = cosmetics.equipped.head;
-      cosmeticEditor.setEquippedFromPreset(equipped?.cosmeticId ?? null, equipped?.transform ?? null);
+      const nextCosmeticId = equipped?.cosmeticId ?? null;
+      // Bug fix (same pattern as DesktopAvatarScene's loadActiveCharacter):
+      // when the character being switched TO happens to have the SAME
+      // cosmeticId already equipped as the one being switched FROM, this
+      // setEquippedFromPreset call is a no-op re-render-wise (equippedId
+      // state doesn't change), so CosmeticAttachmentScene's [equippedId]
+      // attach effect never re-fires and this character's own saved
+      // transform/paint - held in `pendingTransformRef`/
+      // `cosmeticCustomizationsRef` - silently never gets applied, leaving
+      // the PREVIOUS character's transform/paint on screen. Re-apply
+      // directly in that case; a normal id-changing switch (the common
+      // case) still goes through the existing pending-transform/
+      // onAttachmentSettled path below untouched.
+      const sameCosmeticStillEquipped =
+        nextCosmeticId !== null && cosmeticEditor.equippedId === nextCosmeticId;
+      cosmeticEditor.setEquippedFromPreset(nextCosmeticId, equipped?.transform ?? null);
+      if (sameCosmeticStillEquipped && equipped) {
+        cosmeticAttachmentRef.current?.setTransform(equipped.transform);
+        const stored = cosmeticCustomizationsRef.current[equipped.cosmeticId];
+        if (stored) void cosmeticPaintRef.current?.applyPreset(stored.materials);
+      }
       setCosmeticSelected(false);
       setCosmeticSubMode("transform");
 
