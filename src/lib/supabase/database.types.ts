@@ -5,6 +5,7 @@
  * run against a live project as part of this change, so these are typed
  * by hand to exactly match the migration.
  */
+import type { ToonSettings } from "../../components/hair-prototype/toonStyle";
 
 export interface ProfilesRow {
   id: string;
@@ -211,6 +212,12 @@ export interface AvatarAppearanceManifestRow {
    * means the cosmetic has no user paint (still equips/attaches normally,
    * just shows its original material/color - section 40). */
   cosmetic_overlay_path: string | null;
+  /** The publisher's own Toon Shading settings (0007_avatar_appearance_toon.sql) -
+   * `null` for a revision published before this column existed, or by an
+   * older client - the client-side mapper falls back to the safe default
+   * Toon (see database.types.ts's NetworkAppearanceManifest / toonStyle.ts's
+   * DEFAULT_TOON_SETTINGS), never a crash. */
+  toon_settings: Record<string, unknown> | null;
   updated_at: string;
 }
 
@@ -242,5 +249,12 @@ export interface NetworkAppearanceManifest {
   /** Only meaningful when `cosmeticHead` is non-null; `null` = the equipped
    * cosmetic has no user paint (section 40). */
   cosmeticOverlayPath: string | null;
+  /** The publisher's own per-character Toon Shading settings (bug fix -
+   * Toon used to be a single app-wide preference, never part of any
+   * per-user network data at all). `null` = never published (older
+   * revision/client) - callers must fall back to
+   * toonStyle.ts's DEFAULT_TOON_SETTINGS, never crash or silently use the
+   * LOCAL viewer's own Toon settings for someone else's Avatar. */
+  toon: ToonSettings | null;
   updatedAt: string;
 }

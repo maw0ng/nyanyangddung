@@ -7,6 +7,7 @@
  */
 import { getSupabaseClient } from "./client";
 import { getCosmeticDefinition, clampCosmeticScale } from "../../components/hair-prototype/cosmetics/cosmeticRegistry";
+import type { ToonSettings } from "../../components/hair-prototype/toonStyle";
 import type {
   AvatarAppearanceManifestRow,
   NetworkAppearanceManifest,
@@ -18,7 +19,7 @@ export type AppearanceResult<T> = { ok: true; data: T } | { ok: false; error: st
 const BUCKET = "avatar-appearance";
 const NOT_CONFIGURED = "계정 기능을 사용할 수 없습니다.";
 const MANIFEST_COLUMNS =
-  "user_id,schema_version,revision,hair_overlay_path,face_base_overlay_path,face_eye_overlay_path,tops_overlay_paths,morph_values,cosmetic_head_id,cosmetic_position,cosmetic_rotation,cosmetic_scale,cosmetic_overlay_path,updated_at";
+  "user_id,schema_version,revision,hair_overlay_path,face_base_overlay_path,face_eye_overlay_path,tops_overlay_paths,morph_values,cosmetic_head_id,cosmetic_position,cosmetic_rotation,cosmetic_scale,cosmetic_overlay_path,toon_settings,updated_at";
 
 function toUserMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
@@ -49,6 +50,36 @@ function sanitizeMorphValues(value: unknown): Record<string, number> {
     if (typeof v === "number" && Number.isFinite(v)) out[k] = Math.max(0, Math.min(1, v));
   }
   return out;
+}
+
+/** A malformed/foreign/partial jsonb value must never reach
+ * createToonMaterial/lightIntensitiesFor (section 19/32) - every field is
+ * checked individually and the WHOLE object is rejected (-> `null`, meaning
+ * "use the safe default Toon") if even one is missing/wrong-typed, rather
+ * than silently mixing sanitized fields with runtime `undefined` ones. */
+function sanitizeToonSettings(value: unknown): ToonSettings | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const isFiniteNumber = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+  if (typeof v.enabled !== "boolean") return null;
+  if (!isFiniteNumber(v.strength)) return null;
+  if (v.shadeSteps !== 2 && v.shadeSteps !== 3) return null;
+  if (!isFiniteNumber(v.shadowStrength)) return null;
+  if (!isFiniteNumber(v.ambientStrength)) return null;
+  if (typeof v.outlineEnabled !== "boolean") return null;
+  if (!isFiniteNumber(v.outlineWidth)) return null;
+  if (!isFiniteNumber(v.outlineStrength)) return null;
+  const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
+  return {
+    enabled: v.enabled,
+    strength: clamp01(v.strength),
+    shadeSteps: v.shadeSteps,
+    shadowStrength: clamp01(v.shadowStrength),
+    ambientStrength: clamp01(v.ambientStrength),
+    outlineEnabled: v.outlineEnabled,
+    outlineWidth: Math.max(0, v.outlineWidth),
+    outlineStrength: clamp01(v.outlineStrength),
+  };
 }
 
 /** Every remote cosmetic transform component must be a finite number - a
@@ -95,6 +126,7 @@ function mapRow(row: AvatarAppearanceManifestRow): NetworkAppearanceManifest {
     // No point keeping a paint overlay reference for a cosmetic we just
     // decided not to trust/attach at all.
     cosmeticOverlayPath: cosmeticHead ? row.cosmetic_overlay_path ?? null : null,
+    toon: sanitizeToonSettings(row.toon_settings),
     updatedAt: row.updated_at,
   };
 }
@@ -169,7 +201,8 @@ export const avatarAppearanceService = {
        * the equipped cosmetic has no user paint (section 40). */
       cosmeticOverlay: Blob | null;
     },
-    morphValues: Record<string, number>
+    morphValues: Record<string, number>,
+    toonSettings: ToonSettings
   ): Promise<AppearanceResult<number>> {
     const supabase = getSupabaseClient();
     if (!supabase) return { ok: false, error: NOT_CONFIGURED };
@@ -209,6 +242,7 @@ export const avatarAppearanceService = {
         p_cosmetic_rotation: assets.cosmeticHead?.rotation ?? null,
         p_cosmetic_scale: assets.cosmeticHead?.scale ?? null,
         p_cosmetic_overlay_path: cosmeticOverlayPath,
+        p_toon_settings: toonSettings,
       });
       if (error) return { ok: false, error: toUserMessage(error) };
       return { ok: true, data: data as number };

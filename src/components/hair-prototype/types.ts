@@ -1,3 +1,5 @@
+import type { ToonSettings } from "./toonStyle";
+
 export type { PresetMeta, PresetRecord, PresetStore } from "./genericPresetStore";
 
 export type Mode = "rotate" | "draw";
@@ -298,6 +300,17 @@ export interface CharacterAppearance {
   };
   morphValues: Record<string, number>;
   cosmetics: CharacterCosmetics;
+  /** Per-character Toon rendering style (bug fix - this used to be a
+   * single app-wide localStorage preference shared by every character on
+   * the device, via toonStyle.ts's loadToonSettings/saveToonSettings -
+   * which made no sense once CoWork needed to show a Remote Avatar with
+   * ITS OWNER's actual Toon choice rather than whatever the local viewer's
+   * device happened to have set). Optional only so a CharacterPreset saved
+   * before this field existed still type-checks and loads - every read
+   * site falls back to DEFAULT_TOON_SETTINGS (toonStyle.ts), never crashes
+   * on a missing value (section 19's "구버전 호환" principle, applied
+   * locally too). */
+  toon?: ToonSettings;
 }
 
 // ---- v1 (legacy, no cosmetics) - kept ONLY so migration code has

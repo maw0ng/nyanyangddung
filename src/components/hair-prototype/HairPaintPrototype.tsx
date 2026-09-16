@@ -21,7 +21,7 @@ import MorphCustomizer from "./MorphCustomizer";
 import { useAvatarMorphs, type UseAvatarMorphsResult } from "./useAvatarMorphs";
 import ToonStyleController from "./ToonStyleController";
 import ToonDebugPanel from "./ToonDebugPanel";
-import { loadToonSettings, saveToonSettings, lightIntensitiesFor, type ToonSettings } from "./toonStyle";
+import { loadToonSettings, lightIntensitiesFor, type ToonSettings } from "./toonStyle";
 import AvatarAnimationScene, {
   type AvatarAnimationSceneHandle,
 } from "./AvatarAnimationScene";
@@ -219,36 +219,26 @@ export default function HairPaintPrototype() {
   const [morphNames, setMorphNames] = useState<string[]>([]);
   const [morphValues, setMorphValuesState] = useState<Record<string, number>>({});
 
-  // ---- Toon rendering style (app-wide, NOT part of CharacterPreset) ------
-  // Persisted to localStorage (bug fix - this used to reset to
-  // DEFAULT_TOON_SETTINGS on every mount/reload with no persistence at
-  // all) - see toonStyle.ts's loadToonSettings/saveToonSettings.
+  // ---- Toon rendering style (bug fix - "Toon Shading은 전역이 아니라
+  // CharacterPreset에 저장되는 사용자별 외형 설정값") -------------------------
+  // Used to be a single app-wide localStorage preference shared by every
+  // character on the device (toonStyle.ts's loadToonSettings/
+  // saveToonSettings), which made no sense once CoWork needed to show a
+  // Remote Avatar with ITS OWNER's own Toon choice rather than whatever the
+  // local viewer's device happened to have saved - see toonMaterialFactory.ts's
+  // per-instance Toon apply and RemoteAvatarInstance.tsx. Now part of
+  // CharacterAppearance (types.ts) exactly like morphValues/cosmetics
+  // already are: initial value falls back through the OLD global
+  // localStorage preference (loadToonSettings()) only as a one-time
+  // migration bridge for a character saved before this field existed - see
+  // applyCharacterAppearance below, which sets this on every character
+  // load/switch. A change marks the character dirty (handleToonChange,
+  // defined below markDirty to avoid a temporal-dead-zone reference) and
+  // rides the EXISTING 1.5s autosave -> saveCurrentCharacter() ->
+  // notifyPresetSaved() pipeline - the same single path every other
+  // appearance edit already uses, rather than a second, separate save/
+  // notify channel.
   const [toonSettings, setToonSettings] = useState<ToonSettings>(() => loadToonSettings());
-  const handleToonChange = useCallback((patch: Partial<ToonSettings>) => {
-    setToonSettings((prev) => ({ ...prev, ...patch }));
-  }, []);
-  // Debounced (not on every single slider tick, which fires onChange
-  // continuously while dragging) - same "live UI updates immediately, disk
-  // write settles shortly after" convention as this file's own CharacterPreset
-  // autosave. Also notifies Desktop to live-refresh (bug fix - Desktop used
-  // to only ever read this once at its own mount, so a Toon change made
-  // while Desktop was already running/open never showed up on the real
-  // avatar until Desktop restarted) - skips the very first run (initial
-  // load from localStorage, nothing actually changed yet) via
-  // toonMountedRef, same "don't notify on mount" convention as everywhere
-  // else in this file that syncs to Desktop.
-  const toonMountedRef = useRef(false);
-  useEffect(() => {
-    if (!toonMountedRef.current) {
-      toonMountedRef.current = true;
-      return;
-    }
-    const timer = setTimeout(() => {
-      saveToonSettings(toonSettings);
-      window.desktopAPI?.notifyToonSettingsSaved();
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [toonSettings]);
 
   const hairSceneRef = useRef<MiniWaffleHairSceneHandle>(null);
   const faceSceneRef = useRef<FacePaintSceneHandle>(null);
@@ -294,6 +284,14 @@ export default function HairPaintPrototype() {
       saveCurrentCharacterRef.current();
     }, 1500);
   }, []);
+
+  const handleToonChange = useCallback(
+    (patch: Partial<ToonSettings>) => {
+      setToonSettings((prev) => ({ ...prev, ...patch }));
+      markDirty();
+    },
+    [markDirty]
+  );
 
   const handleHairHistoryChange = useCallback(
     (s: HistoryStatus) => {
@@ -869,8 +867,9 @@ export default function HairPaintPrototype() {
       clothing: { materials: topsData.materials },
       morphValues: faceHandle.getMorphValues(),
       cosmetics,
+      toon: toonSettings,
     };
-  }, [cosmeticEditor.equippedId]);
+  }, [cosmeticEditor.equippedId, toonSettings]);
 
   // Failure here must never fail the character save itself (section 19) -
   // callers just persist `null` and the card shows a placeholder.
@@ -945,6 +944,13 @@ export default function HairPaintPrototype() {
       // "touch nothing" rather than assuming the field is always present.
       faceHandle?.setMorphValues(appearance.morphValues ?? {});
       setMorphValuesState(faceHandle?.getMorphValues() ?? {});
+
+      // Toon (bug fix): a character saved before this field existed falls
+      // back to whatever the OLD app-wide localStorage preference was
+      // (one-time migration bridge - see the state's own doc comment
+      // above), never straight to DEFAULT_TOON_SETTINGS, so switching to
+      // an old character never looks like a surprise reset.
+      setToonSettings(appearance.toon ?? loadToonSettings());
 
       // Cosmetics (section 15/16): a CharacterPreset written before
       // cosmetics existed has no `cosmetics` field at all - fall back to an

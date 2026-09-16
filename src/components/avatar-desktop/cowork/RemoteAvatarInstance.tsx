@@ -18,6 +18,7 @@ import {
   type AppearanceSurfaceTarget,
   type AppearanceTargets,
   type CosmeticAppearanceState,
+  type ToonTarget,
 } from "./remoteAppearanceApply";
 import { clearCachedOverlayBitmaps } from "./remoteAppearanceCache";
 import { HEAD_ATTACH_BONE_NAME } from "../../hair-prototype/cosmetics/cosmeticRegistry";
@@ -154,6 +155,7 @@ function RemoteAvatarInstance(
     const faceBaseTargets: AppearanceSurfaceTarget[] = [];
     const faceEyeTargets: AppearanceSurfaceTarget[] = [];
     const topsByMaterial: Record<string, AppearanceSurfaceTarget[]> = {};
+    const toonTargets: ToonTarget[] = [];
     let bodyMorphMesh: THREE.Mesh | null = null;
 
     for (const label of [
@@ -183,6 +185,7 @@ function RemoteAvatarInstance(
         // share a live, mutable Material.
         const toon = createToonMaterial(target.material, category, DEFAULT_TOON_SETTINGS);
         clonedMaterials.push(toon);
+        toonTargets.push({ material: toon, category });
         if (Array.isArray(target.mesh.material)) {
           const next = target.mesh.material.slice();
           next[target.materialIndex] = toon;
@@ -191,7 +194,23 @@ function RemoteAvatarInstance(
           target.mesh.material = toon;
         }
 
-        if (category === "face" || category === "eye") bodyMorphMesh = target.mesh;
+        // Bug fix (Morph sync): this used to unconditionally overwrite
+        // bodyMorphMesh with whichever "face"/"eye" categorized submesh was
+        // processed LAST regardless of whether it actually carries the
+        // Body's morph targets - "Body" loads as a Group of sibling Meshes
+        // (one per material, per collectMaterialTargets' own doc comment),
+        // and only ONE of the base/eye submeshes actually has a
+        // morphTargetDictionary. Whichever one does NOT would silently win
+        // the overwrite depending on traversal order, leaving
+        // morphTargetInfluences on the REAL morph mesh untouched forever
+        // (applyMorphValues' own `!mesh?.morphTargetDictionary` guard then
+        // no-ops on EVERY morph, not just some). Mirrors Local's own
+        // FacePaintScene.tsx `targets.find(t => t.mesh.morphTargetDictionary)`
+        // - first (and only) mesh that actually has the dictionary wins,
+        // never overwritten by one that doesn't.
+        if ((category === "face" || category === "eye") && target.mesh.morphTargetDictionary && !bodyMorphMesh) {
+          bodyMorphMesh = target.mesh;
+        }
 
         const surfaceTarget: AppearanceSurfaceTarget = { material: toon, originalTexture, flipY: category === "hair" };
         if (category === "hair") hairTargets.push(surfaceTarget);
@@ -219,6 +238,7 @@ function RemoteAvatarInstance(
       topsByMaterial,
       bodyMorphMesh,
       headBone,
+      toonTargets,
     };
 
     // Same AvatarAnimationController class Local uses (section 28) - its

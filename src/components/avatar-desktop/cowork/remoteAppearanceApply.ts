@@ -9,7 +9,10 @@ import {
 } from "../../hair-prototype/cosmetics/cosmeticAttachment";
 import { getCosmeticDefinition } from "../../hair-prototype/cosmetics/cosmeticRegistry";
 import { COSMETIC_FALLBACK_CANVAS_SIZE, createColorFillCanvas } from "../../hair-prototype/cosmetics/cosmeticColorFallback";
+import { updateToonMaterial } from "../../hair-prototype/toonMaterialFactory";
+import { DEFAULT_TOON_SETTINGS, type MaterialCategory } from "../../hair-prototype/toonStyle";
 import type { NetworkAppearanceManifest, NetworkCosmeticHead } from "../../../lib/supabase/database.types";
+import { devLog } from "../../../lib/devLog";
 
 /** One mesh/materialIndex slot this appearance surface controls, captured
  * once when RemoteAvatarInstance builds its clone (section 46/47 - the
@@ -27,6 +30,19 @@ export interface AppearanceSurfaceTarget {
   flipY: boolean;
 }
 
+/** One cloned material this instance owns, tagged with the SAME
+ * MaterialCategory createToonMaterial() originally built it with (bug fix -
+ * "친구의 Toon 값이 Remote Avatar에 동기화되지 않음": every remote material
+ * used to be permanently built with DEFAULT_TOON_SETTINGS at clone time and
+ * never revisited). Covers EVERY cloned material, not just the paintable
+ * hair/face/tops surfaces above - Body-base/Body-Parts/head-back (category
+ * "bodyParts") have no paint overlay of their own but still need their
+ * gradient/shading updated to match the manifest owner's Toon settings. */
+export interface ToonTarget {
+  material: THREE.MeshToonMaterial;
+  category: MaterialCategory;
+}
+
 export interface AppearanceTargets {
   hair: AppearanceSurfaceTarget[];
   faceBase: AppearanceSurfaceTarget[];
@@ -42,6 +58,9 @@ export interface AppearanceTargets {
    * (section 26). `null` when this GLB build has no such bone (section 23 -
    * cosmetics are simply never attached for this instance, never a crash). */
   headBone: THREE.Object3D | null;
+  /** Every cloned material this instance owns, for the per-user Toon apply
+   * below - see ToonTarget's own doc comment. */
+  toonTargets: ToonTarget[];
 }
 
 /** One remote instance's currently-attached head cosmetic, if any (section
@@ -207,15 +226,24 @@ async function applyCosmeticHead(
   }
 }
 
-function applyMorphValues(mesh: THREE.Mesh | null, morphValues: Record<string, number>) {
-  if (!mesh?.morphTargetDictionary || !mesh.morphTargetInfluences) return;
+/** Returns the number of values actually written, for PART 29's
+ * `[RemoteMorph] receivedCount=... appliedCount=...` diagnostic - a gap
+ * between the two numbers means some published morph name doesn't exist in
+ * this GLB build's morphTargetDictionary (never a crash, section 13). Value
+ * `0` is a completely normal, intentional morph weight (section 9) - never
+ * treated as "unset" anywhere in this function. */
+function applyMorphValues(mesh: THREE.Mesh | null, morphValues: Record<string, number>): number {
+  if (!mesh?.morphTargetDictionary || !mesh.morphTargetInfluences) return 0;
+  let applied = 0;
   for (const [name, value] of Object.entries(morphValues)) {
     const index = mesh.morphTargetDictionary[name];
     // Unknown morph name (a manifest from a newer/different schema, or a
     // GLB mismatch) - skip just this one value, never throw (section 13).
     if (index === undefined) continue;
     mesh.morphTargetInfluences[index] = Math.max(0, Math.min(1, value));
+    applied++;
   }
+  return applied;
 }
 
 /**
@@ -327,7 +355,29 @@ export async function applyRemoteAppearance(
     applyTexture(surfaceTargets, topsTextures[material] ?? null);
   }
 
-  applyMorphValues(targets.bodyMorphMesh, manifest.morphValues);
+  const appliedMorphCount = applyMorphValues(targets.bodyMorphMesh, manifest.morphValues);
+  devLog(
+    "[RemoteMorph] userId=", userId,
+    "receivedCount=", Object.keys(manifest.morphValues).length,
+    "appliedCount=", appliedMorphCount
+  );
+
+  // Toon (bug fix - "친구의 Toon 값이 Remote Avatar에 동기화되지 않음"): the
+  // SAME updateToonMaterial() Local's own ToonStyleController already uses
+  // for live shadeSteps/shadowStrength slider updates, called once per
+  // owned material with THIS manifest owner's own settings - never the
+  // current (local) user's. `manifest.toon` is `null` for an older
+  // revision/client (section 19) - falls back to the safe default Toon,
+  // same fallback DEFAULT_TOON_SETTINGS already is everywhere else.
+  // Atomic with the texture/morph swap above (same isStillLatest() guard,
+  // same revision), so a Toon-only change rides the identical
+  // fetch-once/apply-once pipeline as a UV/Morph change instead of a
+  // separate, potentially-racing update path.
+  const toonSettings = manifest.toon ?? DEFAULT_TOON_SETTINGS;
+  for (const t of targets.toonTargets) {
+    updateToonMaterial(t.material, t.category, toonSettings);
+  }
+  devLog("[RemoteToon] userId=", userId, "applied=", !!manifest.toon);
 
   // Cosmetics (section 21/26/28/30/31) - its own async attach/detach is
   // guarded by the same isStillLatest() check, re-checked internally right

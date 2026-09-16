@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useRef } from "react";
 import { characterPresetStorage } from "../../hair-prototype/characterPresetStorage";
 import { buildAppearanceOverlay, buildHairOverlay, filterCustomizationMorphs } from "../../hair-prototype/appearanceOverlay";
+import { DEFAULT_TOON_SETTINGS } from "../../hair-prototype/toonStyle";
 import { avatarAppearanceService } from "../../../lib/supabase/avatarAppearanceService";
 import type { NetworkCosmeticHead } from "../../../lib/supabase/database.types";
+import { devLog } from "../../../lib/devLog";
 
 /** Debounce between "character changed" and the actual publish (section
  * 24/25) - never per-stroke/per-slider-tick, only after edits settle. */
@@ -70,6 +72,14 @@ export function useAvatarAppearancePublish(roomId: string | null, userId: string
       }
       const morphValues = filterCustomizationMorphs(appearance.morphValues);
 
+      // Toon (bug fix - per-user Network Appearance data, not a
+      // Local-only preference): the SAME field the Editor now saves into
+      // CharacterPreset (types.ts's CharacterAppearance.toon) - a preset
+      // saved before this field existed falls back to
+      // DEFAULT_TOON_SETTINGS, never the CURRENT publisher device's own
+      // unrelated app-wide leftover.
+      const toonSettings = appearance.toon ?? DEFAULT_TOON_SETTINGS;
+
       // Cosmetics (CoWork appearance-sync-v2 brief section 6/26/40) - reuses
       // the exact same appearance.cosmetics the local Editor/Desktop Avatar
       // already read/wrote in the accessory turn, never a re-derivation.
@@ -107,11 +117,18 @@ export function useAvatarAppearancePublish(roomId: string | null, userId: string
         activeUserId,
         nextRevision,
         { hairOverlay, faceBaseOverlay, faceEyeOverlay, topsOverlays, cosmeticHead, cosmeticOverlay },
-        morphValues
+        morphValues,
+        toonSettings
       );
       if (res.ok) {
         lastPublishedRevisionRef.current = res.data;
         dirtyRef.current = false;
+        devLog(
+          "[NetworkAppearancePublish] userId=", activeUserId,
+          "revision=", res.data,
+          "morphCount=", Object.keys(morphValues).length,
+          "hasToon=", !!appearance.toon
+        );
       }
       // On failure, dirtyRef is left as-is - the next markDirty()/room-join
       // naturally retries with the latest local appearance (section 27 -

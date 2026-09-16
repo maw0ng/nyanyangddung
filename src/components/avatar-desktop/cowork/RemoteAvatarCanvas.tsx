@@ -81,7 +81,12 @@ export default function RemoteAvatarCanvas({
 }) {
   const instanceRef = useRef<RemoteAvatarInstanceHandle>(null);
   const [popupOpen, setPopupOpen] = useState(false);
-  const { ambient, key, fill } = lightIntensitiesFor(DEFAULT_TOON_SETTINGS, 0.8, 1.2, 0.4);
+  // Bug fix ("친구의 Toon 값이 동기화되지 않음"): this Canvas's own scene
+  // lighting (ambient/key/fill) must reflect THIS participant's own
+  // published Toon settings, not a hardcoded default - reactive automatically
+  // since `appearance` is a plain prop (a revision update re-renders this
+  // component with the new manifest, no extra effect needed).
+  const { ambient, key, fill } = lightIntensitiesFor(appearance?.toon ?? DEFAULT_TOON_SETTINGS, 0.8, 1.2, 0.4);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width }}>

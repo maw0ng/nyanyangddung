@@ -124,23 +124,18 @@ export default function DesktopAvatarScene() {
   const [topsMaterialNames, setTopsMaterialNames] = useState<string[]>([]);
   const loadedRef = useRef(false);
 
-  // Toon rendering style (bug fix): previously always DEFAULT_TOON_SETTINGS
-  // regardless of what the user tuned in the Avatar Editor's Toon Style
-  // panel, since that panel never persisted its settings anywhere at all.
-  // Now reads the same app-wide localStorage preference the Editor saves to
-  // (toonStyle.ts's loadToonSettings/saveToonSettings), AND live-refreshes
-  // (second bug fix - "동기화가 안돼") whenever the Editor notifies a change,
-  // through the exact same notify/listen shape CharacterPreset sync already
-  // uses (desktopAPI.notifyToonSettingsSaved() -> "toon-settings-updated"),
-  // just kept as its own separate signal since Toon Style isn't part of
-  // CharacterPreset. Absent outside Electron, same as the preset listener.
+  // Toon rendering style (bug fix - "Toon Shading은 전역이 아니라
+  // CharacterPreset에 저장되는 사용자별 외형 설정값"): now part of the active
+  // CharacterPreset's own CharacterAppearance (types.ts), set inside
+  // loadActiveCharacter() below exactly like Hair/Face/Tops/Morph/Cosmetics
+  // already are, and refreshed by the SAME existing
+  // onCharacterPresetUpdated listener - no separate notify/listen channel
+  // needed anymore (the old notifyToonSettingsSaved/onToonSettingsUpdated
+  // IPC pair is now unused; left in place in electron/main.ts and preload.ts
+  // as harmless dead code rather than risking an unrelated edit there).
+  // loadToonSettings() here is only the pre-first-load fallback shown for
+  // the instant before loadActiveCharacter's own effect runs.
   const [toonSettings, setToonSettings] = useState(() => loadToonSettings());
-  useEffect(() => {
-    if (!window.desktopAPI?.onToonSettingsUpdated) return;
-    return window.desktopAPI.onToonSettingsUpdated(() => {
-      setToonSettings(loadToonSettings());
-    });
-  }, []);
   // ---- Cosmetics (액세서리/귀) - display-only reflection of the active
   // CharacterPreset's equipped ear (section 17). Renders the EXACT same
   // reusable CosmeticAttachmentScene/CosmeticPaintScene components the
@@ -551,6 +546,12 @@ export default function DesktopAvatarScene() {
     // Never crashes on an older/partial CharacterPreset - same defensive
     // fallback HairPaintPrototype's applyCharacterAppearance uses.
     faceSceneRef.current?.setMorphValues(appearance.morphValues ?? {});
+
+    // Toon (bug fix - per-character, not app-wide): same migration-bridge
+    // fallback as the Editor's own applyCharacterAppearance - a character
+    // saved before this field existed uses the OLD global preference
+    // rather than jumping straight to DEFAULT_TOON_SETTINGS.
+    setToonSettings(appearance.toon ?? loadToonSettings());
 
     // Cosmetics (section 15/17): a CharacterPreset written before cosmetics
     // existed has no `cosmetics` field - falls back to "nothing equipped"
