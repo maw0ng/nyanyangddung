@@ -60,10 +60,27 @@ export function useCosmeticEditor({ attachmentRef, markDirty }: UseCosmeticEdito
    * onAttachmentChange) fires next. */
   const pendingTransformRef = useRef<CosmeticTransform | null>(null);
 
+  // Bug fix (cosmetic transform not restoring on Editor reopen): this used
+  // to also null out `pendingTransformRef` here, but its ONLY caller
+  // (HairPaintPrototype's clearAllHistory) is itself called from
+  // applyCharacterAppearance right after setEquippedFromPreset just wrote
+  // the freshly-loaded CharacterPreset's saved transform into that exact
+  // ref - wiping it here discarded it before CosmeticAttachmentScene's
+  // async attach could ever settle and consume it via onAttachmentSettled,
+  // so a re-adjusted accessory always silently reverted to
+  // cosmeticRegistry.ts's registry defaultTransform on every Editor
+  // reopen/character switch (Desktop was never affected - it doesn't use
+  // this ref at all). Undo/redo history and "a transform is waiting for an
+  // in-flight attach to settle" are unrelated concerns that happened to
+  // share this ref for clearing; a stale/unconsumed pending value is
+  // harmless (it's always overwritten by the next setEquippedFromPreset/
+  // equip/undo/redo call before anything would ever read it, and an
+  // abandoned attach's own `cancelled` guard already stops it from firing
+  // onAttachmentSettled at all - see CosmeticAttachmentScene.tsx), so
+  // there's nothing left here that actually needs clearing.
   const clearCosmeticHistory = useCallback(() => {
     undoStack.current = [];
     redoStack.current = [];
-    pendingTransformRef.current = null;
     syncHistoryStatus();
   }, [syncHistoryStatus]);
 
