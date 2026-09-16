@@ -16,18 +16,19 @@ useGLTF.preload(MODEL_URL);
 export interface AvatarAnimationSceneHandle {
   setAnimationState: (state: AvatarAnimationState) => void;
   playTemporaryAnimation: (state: AvatarAnimationState) => void;
-  /** Freezes the avatar at its bind/rest pose for editing - see
+  /** Freezes the avatar at a static Edit Pose (a held Idle frame, NOT the
+   * raw bind/rest pose) for editing - see
    * AvatarAnimationController.enterEditMode(). */
   enterEditMode: () => void;
-  /** Resumes animation from rest pose into the persistent state. */
+  /** Resumes animation from the static Edit Pose into the persistent state. */
   exitEditMode: () => void;
   getDebugSnapshot: () => AvatarAnimationDebugSnapshot;
 }
 
 interface AvatarAnimationSceneProps {
-  /** True to start the controller already frozen at rest pose (Avatar
-   * Editor's default) instead of auto-playing Idle. Applied once, at the
-   * moment the controller is first constructed. */
+  /** True to start the controller already frozen at the static Edit Pose
+   * (Avatar Editor's default) instead of auto-playing Idle. Applied once,
+   * at the moment the controller is first constructed. */
   startInEditMode?: boolean;
 }
 

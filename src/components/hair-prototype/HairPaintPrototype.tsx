@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
-import { Bounds, OrbitControls } from "@react-three/drei";
+import { OrbitControls } from "@react-three/drei";
 import MiniWaffleHairScene, {
   type MiniWaffleHairSceneHandle,
 } from "./MiniWaffleHairScene";
@@ -84,6 +84,40 @@ const INITIAL_COSMETIC_DEBUG_INFO: CosmeticDebugInfo = {
 const DEFAULT_HAIR_PRESET_META = makeDefaultPresetMeta("기본 (투명)");
 const DEFAULT_FACE_PRESET_META = makeDefaultPresetMeta("기본");
 const DEFAULT_TOPS_PRESET_META = makeDefaultPresetMeta("기본");
+
+/**
+ * Editor camera framing (rotation-bug fix). This used to be a static
+ * `camera={{position:[0,1.3,3], fov:45}}` wrapped in a drei
+ * `<Bounds fit clip observe>` that auto-recomputed camera position AND
+ * `controls.target` every time the scene's bounding box changed. That box
+ * came from `Box3.setFromObject()`, which for a SkinnedMesh only ever
+ * inspects the mesh's cached, UNSKINNED bind-pose geometry transformed by
+ * its static node matrixWorld chain - it never accounts for the actual
+ * bone-driven skin deformation. This model's Armature root node carries a
+ * baked +90 degree X rotation (a Blender->glTF axis-conversion artifact,
+ * confirmed by inspecting the GLB's own node transforms) that the "root"
+ * bone's own ~-90 degree counter-rotation correctly cancels out ONLY
+ * through real skinning - so the character always rendered upright
+ * (confirmed: DesktopAvatarScene, which never uses Bounds, shows the exact
+ * same model correctly with a fixed camera - see desktopCameraConfig.ts),
+ * but the naive Box3 Bounds computed was effectively rotated 90 degrees
+ * from the true visual shape. That wrong box drove `controls.target` to
+ * ~[0, 0.01, 0.23] (near the character's FEET, offset forward) instead of
+ * its actual chest-height center - orbiting around that wrong, near-ground
+ * pivot is what produced the reported "tumbling / mixed-axis" rotation.
+ *
+ * Fix: stop deriving the orbit target from an unskinned bounding box
+ * entirely and manage it explicitly instead, exactly like Desktop already
+ * does successfully for this same rig (DESKTOP_CAMERA_TARGET = [0, 0.25,
+ * 0], "origin sits at the character's feet"). The Editor needs a wider,
+ * further-back framing than Desktop's tight portrait crop (to show the
+ * full body for Hair/Face/Tops/Cosmetic editing), so these are re-tuned
+ * for that FOV/distance rather than reusing Desktop's numbers directly -
+ * verified empirically via screenshots, not recomputed per frame.
+ */
+const EDITOR_CAMERA_POSITION: [number, number, number] = [0, 0.2, 0.95];
+const EDITOR_CAMERA_FOV = 45;
+const EDITOR_ORBIT_TARGET: [number, number, number] = [0, 0.2, 0];
 
 interface LayerUIState {
   layers: LayerSummary[];
@@ -748,38 +782,6 @@ export default function HairPaintPrototype() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [editMode, cosmeticSubMode]);
-
-  // Cosmetic Transform sub-mode must edit against the SAME Head-bone
-  // orientation Desktop actually renders with (bug fix - discovered via a
-  // real installed-app report: accessories positioned via TransformControls
-  // here looked correct in the Editor but were wildly displaced on
-  // Desktop). The Editor's default "Rest Pose" (startInEditMode below) is
-  // the raw glTF bind pose, whose Head bone orientation differs from every
-  // actual AnimationClip (Idle/Work/Break/...) by roughly 90 degrees for
-  // this rig (see cosmeticRegistry.ts's own defaultTransform comments,
-  // already tuned against animated pose for exactly this reason) -
-  // Desktop/DesktopAvatarScene never shows Rest Pose at all, it always
-  // plays Idle. A transform a user drags/drops while frozen in Rest Pose is
-  // therefore calibrated for a pose Desktop never uses, and ends up
-  // nowhere near the head once Idle's own Head-bone orientation applies
-  // it - exactly the bug reported.
-  //
-  // Fix: exit Rest Pose (crossfade into the persistent state - Idle unless
-  // the dev Animation Test Panel changed it) for as long as the user is
-  // specifically in Cosmetic Transform sub-mode, so what they see while
-  // dragging the gizmo is the SAME Head-bone orientation Desktop will
-  // apply the saved transform against. Every other mode (Hair/Face/Tops/
-  // Cosmetic Paint included - paint only reads mesh UVs, which don't
-  // depend on world-space bone orientation at all) stays in the frozen
-  // Rest Pose exactly as before, so raycast-painting precision is
-  // unaffected.
-  useEffect(() => {
-    if (editMode === "cosmetic" && cosmeticSubMode === "transform") {
-      animationSceneRef.current?.exitEditMode();
-    } else {
-      animationSceneRef.current?.enterEditMode();
-    }
   }, [editMode, cosmeticSubMode]);
 
   // ===== Characters ("My Characters") =======================================
@@ -1704,7 +1706,7 @@ export default function HairPaintPrototype() {
 
       <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         <Canvas
-          camera={{ position: [0, 1.3, 3], fov: 45 }}
+          camera={{ position: EDITOR_CAMERA_POSITION, fov: EDITOR_CAMERA_FOV }}
           shadows={false}
           gl={{ preserveDrawingBuffer: true }}
           onCreated={(state) => {
@@ -1726,18 +1728,16 @@ export default function HairPaintPrototype() {
           <directionalLight position={[-3, 2, -4]} intensity={fillLightIntensity} />
 
           <Suspense fallback={null}>
-            <Bounds fit clip observe margin={1.3}>
-              <MiniWaffleHairScene
-                ref={hairSceneRef}
-                mode={hairMode}
-                tool={hairTool}
-                color={hairColor}
-                brushSize={hairBrushSize}
-                onDebugUpdate={handleDebugUpdate}
-                onHistoryChange={handleHairHistoryChange}
-                onLayersChange={handleHairLayersChange}
-              />
-            </Bounds>
+            <MiniWaffleHairScene
+              ref={hairSceneRef}
+              mode={hairMode}
+              tool={hairTool}
+              color={hairColor}
+              brushSize={hairBrushSize}
+              onDebugUpdate={handleDebugUpdate}
+              onHistoryChange={handleHairHistoryChange}
+              onLayersChange={handleHairLayersChange}
+            />
             <FacePaintScene
               ref={faceSceneRef}
               editMode={editMode}
@@ -1810,8 +1810,11 @@ export default function HairPaintPrototype() {
             enabled={orbitEnabled}
             enableDamping
             dampingFactor={0.1}
-            minDistance={0.5}
-            maxDistance={10}
+            target={EDITOR_ORBIT_TARGET}
+            minDistance={0.3}
+            maxDistance={3}
+            minPolarAngle={Math.PI * 0.08}
+            maxPolarAngle={Math.PI * 0.92}
           />
         </Canvas>
 

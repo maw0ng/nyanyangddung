@@ -202,24 +202,60 @@ export class AvatarAnimationController {
     this.crossFadeTo(this.persistentState, DEFAULT_CROSSFADE_SECONDS);
   }
 
-  /** Freezes the avatar for editing: stops every AnimationAction (so no
-   * stale action resumes later on its own), then resets every SkinnedMesh
-   * under `root` to its bind/rest pose via SkinnedMesh.pose() - the
-   * standard three.js way to return a skinned rig to rest, as opposed to
-   * merely pausing mid-frame. update() below then skips mixer.update()
-   * entirely while editMode is true, so nothing re-drives the skeleton
-   * afterwards. Never touches morphTargetInfluences (a completely separate
-   * deformation system from skinning) or geometry/material/mesh objects -
-   * user-set Shape Key values and Paint Layer textures are untouched. */
+  /** Freezes the avatar for editing: a STATIC pose, held with no further
+   * animation playback (bug fix - editor rotation bug).
+   *
+   * This used to reset every SkinnedMesh to its raw bind/rest pose via
+   * SkinnedMesh.pose(). That pose is NOT actually Y-up for this rig: the
+   * GLB's Armature root node carries a baked +90 degree X-axis rotation (a
+   * Blender->glTF axis-conversion artifact, confirmed by inspecting the
+   * GLB's own node transforms), which every real AnimationClip's own
+   * root-bone keyframes correctly compensate for - but the raw bind pose
+   * (no clip applied) does not, since compensating for it is baked INTO
+   * the clips, not the bind pose itself. Left in bind pose, the whole
+   * character's head-to-foot axis actually runs along World Z, not World
+   * Y (confirmed empirically: Hips/Chest/Neck/Head world positions all sat
+   * near Y=0 with increasing Z). OrbitControls assumes World Y-up, so
+   * orbiting a character whose true "up" is World Z produced exactly the
+   * reported "lying on its side / tumbling" rotation - this was never an
+   * OrbitControls or camera bug on its own.
+   *
+   * Fix: instead of the raw bind pose, evaluate the Idle clip at time 0
+   * ONCE and hold that - a real static pose (no playback, satisfying "the
+   * character must not move over time while editing"), but with the SAME
+   * correct Y-up orientation every actual AnimationClip has (matching
+   * exactly how DesktopAvatarScene - which never uses bind pose, always
+   * plays Idle - already renders this same model correctly upright). Also
+   * fixes a related, previously-patched-around symptom: the Head bone's
+   * bind-pose orientation differed from its Idle orientation by ~90
+   * degrees, which used to require Cosmetic Transform sub-mode to
+   * specially exit edit mode just to preview accessory placement
+   * correctly (see HairPaintPrototype's git history) - with edit mode
+   * itself now Idle-oriented, that workaround is no longer needed.
+   *
+   * Falls back to the old SkinnedMesh.pose() only if this GLB somehow has
+   * no Idle clip at all (defensive - Idle is required in practice). Never
+   * touches morphTargetInfluences (a completely separate deformation
+   * system from skinning) or geometry/material/mesh objects - user-set
+   * Shape Key values and Paint Layer textures are untouched either way. */
   enterEditMode() {
     if (this.editMode) return;
     this.editMode = true;
     this.mixer.stopAllAction();
     this.currentAction = null;
-    this.root.traverse((obj) => {
-      const mesh = obj as THREE.SkinnedMesh;
-      if (mesh.isSkinnedMesh) mesh.pose();
-    });
+
+    const idleAction = this.actions.Idle;
+    if (idleAction) {
+      idleAction.reset().play();
+      idleAction.time = 0;
+      this.mixer.update(0);
+      idleAction.stop();
+    } else {
+      this.root.traverse((obj) => {
+        const mesh = obj as THREE.SkinnedMesh;
+        if (mesh.isSkinnedMesh) mesh.pose();
+      });
+    }
   }
 
   /** Resumes animation: crossfades from the current rest pose into the

@@ -27,9 +27,11 @@ const sectionTitleStyle: React.CSSProperties = {
 interface AnimationTestPanelProps {
   onSetState: (state: AvatarAnimationState) => void;
   onPlayTemporary: (state: AvatarAnimationState) => void;
-  /** Returns the avatar to its frozen rest pose (Avatar Editor's default) -
-   * setAnimationState/setPlayTemporary above always leave that state as a
-   * side effect, so this is how the panel gets back to it for testing. */
+  /** Returns the avatar to its frozen static Edit Pose (Avatar Editor's
+   * default - a held frame of Idle, NOT the raw bind/rest pose; see
+   * avatarAnimation.ts's enterEditMode() for why) - setAnimationState/
+   * setPlayTemporary above always leave that state as a side effect, so
+   * this is how the panel gets back to it for testing. */
   onEnterEditMode: () => void;
   debug: AvatarAnimationDebugSnapshot | null;
 }
@@ -55,7 +57,7 @@ export default function AnimationTestPanel({
         }}
         onClick={onEnterEditMode}
       >
-        편집 모드 (Rest Pose)
+        편집 모드 (Edit Pose)
       </button>
 
       <div style={{ fontSize: 11, color: "#8b93a3", marginBottom: 6 }}>지속 상태</div>
@@ -102,7 +104,7 @@ export default function AnimationTestPanel({
 
       {debug && (
         <div style={{ fontSize: 11, color: "#6b7280", marginTop: 10, lineHeight: 1.6 }}>
-          Edit Mode: {debug.editMode ? "ON (rest pose)" : "OFF"}
+          Edit Mode: {debug.editMode ? "ON (edit pose)" : "OFF"}
           <br />
           Persistent: {debug.persistent}
           <br />
