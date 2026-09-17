@@ -28,7 +28,9 @@ import {
   EDITOR_ROUTE,
   FRIENDS_ROUTE,
   COWORK_ROUTE,
+  ZERO_MENU_EXPANSION,
   type DesktopWindowSize,
+  type MenuExpansion,
 } from "./desktopWindowConfig";
 import { startStaticServer } from "./staticServer";
 import { loadAvatarScale, loadWindowPosition, saveAvatarScale, saveWindowPosition } from "./windowState";
@@ -92,6 +94,14 @@ let currentAvatarScale = AVATAR_SCALE_DEFAULT;
  * currentAvatarScale so either one changing alone still resizes correctly
  * against the other's current value. */
 let currentParticipantCount = 1;
+
+/** Extra px the window currently carries beyond its compact grid size,
+ * ONLY while the character menu is open and needed more room than flipping
+ * within the compact window could provide - see ZERO_MENU_EXPANSION's own
+ * doc comment (desktopWindowConfig.ts) and applyMenuExpansion() below.
+ * Zero whenever the menu is closed or fit without any expansion (the
+ * common case). */
+let menuExpansion: MenuExpansion = ZERO_MENU_EXPANSION;
 
 /** Bounds of the window (or a proposed one) at the drag's start - captured
  * once on "desktop:beginWindowDrag", read by every subsequent
@@ -239,12 +249,79 @@ function applyLayout(rawScale: number, participantCount?: number) {
     proposedY = Math.round(oldBottom - newGrid.height);
   }
 
+  // `proposedX/Y` is the new CONTENT origin (the grid/avatar's own top-left,
+  // matching every call site above that computed it against `newGrid`
+  // alone) - when the character menu is currently expanding the window
+  // (menuExpansion non-zero, e.g. the user opened "설정" and is dragging the
+  // Avatar Scale slider while the menu stays open), the ACTUAL window must
+  // stay `menuExpansion` px larger on each edge and shifted so that same
+  // content origin still ends up in the right place (PART 5's expansion
+  // composing correctly with an in-flight scale/participant-count change,
+  // rather than one silently discarding the other).
+  const totalWidth = newGrid.width + menuExpansion.left + menuExpansion.right;
+  const totalHeight = newGrid.height + menuExpansion.top + menuExpansion.bottom;
   const display = screen.getDisplayMatching(bounds);
-  const clamped = clampFullyWithinWorkArea(proposedX, proposedY, newGrid, display);
+  const clamped = clampFullyWithinWorkArea(
+    proposedX - menuExpansion.left,
+    proposedY - menuExpansion.top,
+    { width: totalWidth, height: totalHeight },
+    display
+  );
 
   currentAvatarScale = nextScale;
   currentParticipantCount = nextCount;
-  desktopWindow.setBounds({ x: clamped.x, y: clamped.y, width: newGrid.width, height: newGrid.height });
+  desktopWindow.setBounds({ x: clamped.x, y: clamped.y, width: totalWidth, height: totalHeight });
+}
+
+/** The single place the window is ever resized for the character menu's own
+ * collision-avoidance fallback (bug fix - "설정창/메뉴가 BrowserWindow 크기
+ * 때문에 잘리는 문제", PART 5/6/13) - called by the Renderer (via
+ * "desktop:setMenuExpansion") only when its own flip-based placement
+ * (menuPlacement.ts's computeMenuPlacement) determines the menu doesn't fit
+ * the CURRENT compact window even in its best-fitting direction. Never
+ * touches currentAvatarScale/currentParticipantCount - purely adds/removes
+ * a margin around the SAME grid content, and (PART 7) keeps that content's
+ * own on-screen origin fixed wherever clamping against the current
+ * display's work area allows it to stay exactly fixed (PART 9 - the total
+ * expanded window is what gets fully contained, never spilling past a work
+ * area edge just to preserve pixel-perfect content position in an extreme
+ * edge case). Passing ZERO_MENU_EXPANSION restores the exact compact
+ * bounds the menu had before it ever expanded anything (PART 13).
+ */
+function applyMenuExpansion(next: MenuExpansion) {
+  if (!desktopWindow) {
+    menuExpansion = next;
+    return;
+  }
+  if (
+    next.left === menuExpansion.left &&
+    next.right === menuExpansion.right &&
+    next.top === menuExpansion.top &&
+    next.bottom === menuExpansion.bottom
+  ) {
+    return;
+  }
+
+  const bounds = desktopWindow.getBounds();
+  // The grid/avatar content's own CURRENT on-screen origin, independent of
+  // whatever expansion (if any) is already applied.
+  const contentX = bounds.x + menuExpansion.left;
+  const contentY = bounds.y + menuExpansion.top;
+
+  const grid = computeGridWindowSize(currentAvatarScale, currentParticipantCount);
+  const totalWidth = grid.width + next.left + next.right;
+  const totalHeight = grid.height + next.top + next.bottom;
+
+  const display = screen.getDisplayMatching(bounds);
+  const clamped = clampFullyWithinWorkArea(
+    contentX - next.left,
+    contentY - next.top,
+    { width: totalWidth, height: totalHeight },
+    display
+  );
+
+  menuExpansion = next;
+  desktopWindow.setBounds({ x: clamped.x, y: clamped.y, width: totalWidth, height: totalHeight });
 }
 
 async function resolveUrl(route: string): Promise<string> {
@@ -485,6 +562,24 @@ ipcMain.handle("desktop:setAvatarScale", (_event, scale: number) => {
 // derived live from Room membership each time, not a user preference.
 ipcMain.handle("desktop:setParticipantCount", (_event, count: number) => {
   applyLayout(currentAvatarScale, count);
+});
+
+// Character menu bounds expansion (bug fix - "설정창/메뉴가 잘리는 문제") -
+// thin IPC passthrough, all geometry lives in applyMenuExpansion() above.
+// `next` is validated defensively (never trusts the Renderer's numbers
+// blindly for something that resizes/repositions a real OS window) -
+// non-finite or negative values fall back to 0 per edge rather than
+// producing a garbage setBounds call.
+function sanitizeMenuExpansionEdge(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+}
+ipcMain.handle("desktop:setMenuExpansion", (_event, next: Partial<MenuExpansion> | null) => {
+  applyMenuExpansion({
+    left: sanitizeMenuExpansionEdge(next?.left),
+    right: sanitizeMenuExpansionEdge(next?.right),
+    top: sanitizeMenuExpansionEdge(next?.top),
+    bottom: sanitizeMenuExpansionEdge(next?.bottom),
+  });
 });
 
 // ---- Click-through (section 3/6) -----------------------------------------

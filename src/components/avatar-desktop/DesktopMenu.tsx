@@ -1,6 +1,6 @@
 "use client";
 
-import { menuAnchorFor, type DesktopAvatarLayout } from "./desktopAvatarLayout";
+import { forwardRef } from "react";
 
 /**
  * Small floating panel that opens next to the character on click (section
@@ -9,11 +9,11 @@ import { menuAnchorFor, type DesktopAvatarLayout } from "./desktopAvatarLayout";
  * future addition (section 23 - "25:00 / ▶ 작업 시작" above a divider)
  * can be prepended later without restructuring this component.
  *
- * Its anchor position is no longer a fixed pixel constant - `menuAnchorFor`
- * (see desktopAvatarLayout.ts) derives it from the current Avatar Scale
- * layout, so the menu keeps appearing next to the character at every scale
- * (section 21 of the Avatar Scale brief) instead of drifting away from a
- * shrunk/grown avatar.
+ * Its position is computed by the parent (DesktopAvatarScene, via
+ * menuPlacement.ts's computeMenuPlacement) from the character's own live
+ * on-screen rect with collision detection against the current window - see
+ * the `position` prop's own doc comment (bug fix - "설정창/메뉴가
+ * BrowserWindow 크기 때문에 잘리는 문제").
  */
 
 interface MenuItemProps {
@@ -54,11 +54,16 @@ const divider: React.CSSProperties = { borderTop: "1px solid rgba(255,255,255,0.
 
 interface DesktopMenuProps {
   open: boolean;
-  /** Current Avatar Scale layout - drives the anchor position (see
-   * menuAnchorFor). DesktopAvatarScene freezes this snapshot while
-   * `settingsOpen` is true so the menu (and the size slider inside it)
-   * never drifts out from under the user's own pointer mid-drag. */
-  layout: DesktopAvatarLayout;
+  /** Explicit top-left position in CSS px (bug fix - "설정창/메뉴가
+   * BrowserWindow 크기 때문에 잘리는 문제") - computed by DesktopAvatarScene
+   * via menuPlacement.ts's collision-avoiding computeMenuPlacement() against
+   * the Local avatar's actual on-screen rect, never a fixed offset from a
+   * layout constant anymore. `null` on the very first render after opening
+   * (before DesktopAvatarScene has measured this component's own rendered
+   * size via the forwarded ref) - rendered off-screen-but-measurable rather
+   * than skipped, so the two-pass measure-then-place technique has
+   * something to measure. */
+  position: { top: number; left: number } | null;
   alwaysOnTop: boolean;
   onOpenEditor: () => void;
   onOpenFriends: () => void;
@@ -95,48 +100,65 @@ interface DesktopMenuProps {
   settingsSection: React.ReactNode;
   onOpenSettings: () => void;
   onCloseSettings: () => void;
-  /** Pixel offset added to the computed anchor (section 12 of the
-   * Desktop-avatar-rendering brief's computeLocalSlotOrigin) - zero
-   * (default) whenever Local's avatar sits at the grid's own top-left, ie.
-   * whenever there's no active CoWork Room (section 13's "기존과 동일"). */
-  anchorOffset?: { x: number; y: number };
+  /** Bug fix ("설정창/메뉴 우측 상단에 X 닫기 버튼 추가") - closes ONLY this
+   * menu (React state, see DesktopAvatarScene's closeCharacterMenu). Never
+   * wired to anything Electron-window-related - see this component's own
+   * X-button doc comment below. */
+  onRequestClose: () => void;
 }
 
-export default function DesktopMenu({
-  open,
-  layout,
-  alwaysOnTop,
-  onOpenEditor,
-  onOpenFriends,
-  onOpenCowork,
-  hasCoworkRoom,
-  onToggleAlwaysOnTop,
-  onHide,
-  onQuit,
-  onMouseEnter,
-  onMouseLeave,
-  timerSection,
-  profileSection,
-  coworkSection,
-  settingsOpen,
-  settingsSection,
-  onOpenSettings,
-  onCloseSettings,
-  anchorOffset = { x: 0, y: 0 },
-}: DesktopMenuProps) {
+/**
+ * `forwardRef` (bug fix - "설정창/메뉴가 BrowserWindow 크기 때문에 잘리는
+ * 문제"): DesktopAvatarScene needs this component's ACTUAL rendered size
+ * (which varies with content - profile/timer/cowork sections, settings
+ * view) to run collision detection against, via the standard "render once,
+ * measure, reposition" two-pass technique for a popover whose size isn't
+ * known upfront - see menuPlacement.ts's own header comment.
+ */
+const DesktopMenu = forwardRef<HTMLDivElement, DesktopMenuProps>(function DesktopMenu(
+  {
+    open,
+    position,
+    alwaysOnTop,
+    onOpenEditor,
+    onOpenFriends,
+    onOpenCowork,
+    hasCoworkRoom,
+    onToggleAlwaysOnTop,
+    onHide,
+    onQuit,
+    onMouseEnter,
+    onMouseLeave,
+    timerSection,
+    profileSection,
+    coworkSection,
+    settingsOpen,
+    settingsSection,
+    onOpenSettings,
+    onCloseSettings,
+    onRequestClose,
+  },
+  forwardedRef
+) {
   if (!open) return null;
 
   const width = settingsOpen ? 200 : timerSection || profileSection || coworkSection ? 220 : 148;
-  const anchor = menuAnchorFor(layout, width);
 
   return (
     <div
+      ref={forwardedRef}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       style={{
         position: "fixed",
-        top: anchor.top + anchorOffset.y,
-        left: anchor.left + anchorOffset.x,
+        // Rendered at (0,0) - off in the corner but still fully laid out
+        // and measurable - until DesktopAvatarScene's own layout effect has
+        // measured it and computed a real collision-avoided position
+        // (never `display:none`, which would report a zero-size rect and
+        // make that very first measurement useless).
+        top: position?.top ?? 0,
+        left: position?.left ?? 0,
+        visibility: position ? "visible" : "hidden",
         width,
         borderRadius: 10,
         background: "rgba(24,24,28,0.85)",
@@ -146,46 +168,96 @@ export default function DesktopMenu({
         backdropFilter: "blur(4px)",
       }}
     >
-      {settingsOpen ? (
-        <>
-          {settingsSection}
-          <div style={divider} />
-          <MenuItem label="← 뒤로" onClick={onCloseSettings} />
-        </>
-      ) : (
-        <>
-          {profileSection && (
-            <>
-              {profileSection}
-              <div style={divider} />
-            </>
-          )}
-          {timerSection && (
-            <>
-              {timerSection}
-              <div style={divider} />
-            </>
-          )}
-          {coworkSection && (
-            <>
-              {coworkSection}
-              <div style={divider} />
-            </>
-          )}
-          <MenuItem label="캐릭터 꾸미기" onClick={onOpenEditor} />
-          {!hasCoworkRoom && <MenuItem label="같이 작업하기" onClick={onOpenCowork} />}
-          <MenuItem label="친구" onClick={onOpenFriends} />
-          <MenuItem
-            label="항상 위"
-            onClick={onToggleAlwaysOnTop}
-            trailing={<span style={{ color: alwaysOnTop ? "#7fd490" : "#5a5f68" }}>{alwaysOnTop ? "✓" : ""}</span>}
-          />
-          <MenuItem label="설정" onClick={onOpenSettings} />
-          <div style={divider} />
-          <MenuItem label="숨기기" onClick={onHide} />
-          <MenuItem label="종료" onClick={onQuit} />
-        </>
-      )}
+      {/* Bug fix ("설정창/메뉴 우측 상단에 X 닫기 버튼 추가") - closes ONLY
+          the React `menuOpen` state (via onRequestClose ->
+          DesktopAvatarScene's closeCharacterMenu), the exact same single
+          close path Escape/outside-click/re-clicking the character already
+          use (PART 14) - never app.quit()/BrowserWindow.close()/hide/leave-
+          room/anything Electron-window-related. `-webkit-app-region:
+          no-drag` (PART 15) keeps it from ever being interpreted as a
+          window-drag handle even though it sits inside the same
+          interactive-region tree the Avatar drag/Window drag gestures
+          share. */}
+      <button
+        type="button"
+        onClick={onRequestClose}
+        aria-label="닫기"
+        style={{
+          position: "absolute",
+          top: 6,
+          right: 6,
+          width: 20,
+          height: 20,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "transparent",
+          border: "none",
+          borderRadius: 5,
+          color: "#9aa0aa",
+          fontSize: 14,
+          lineHeight: 1,
+          cursor: "pointer",
+          WebkitAppRegion: "no-drag",
+        } as React.CSSProperties}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "rgba(255,255,255,0.1)";
+          e.currentTarget.style.color = "#eef0f4";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "transparent";
+          e.currentTarget.style.color = "#9aa0aa";
+        }}
+      >
+        ×
+      </button>
+      {/* Top margin clears the X button's own 20px row so it never overlaps
+          the first menu item's label/trailing content (PART 11 - "너무
+          크거나 과하게 튀는 버튼으로 만들지 않는다", kept minimal). */}
+      <div style={{ marginTop: 18 }}>
+        {settingsOpen ? (
+          <>
+            {settingsSection}
+            <div style={divider} />
+            <MenuItem label="← 뒤로" onClick={onCloseSettings} />
+          </>
+        ) : (
+          <>
+            {profileSection && (
+              <>
+                {profileSection}
+                <div style={divider} />
+              </>
+            )}
+            {timerSection && (
+              <>
+                {timerSection}
+                <div style={divider} />
+              </>
+            )}
+            {coworkSection && (
+              <>
+                {coworkSection}
+                <div style={divider} />
+              </>
+            )}
+            <MenuItem label="캐릭터 꾸미기" onClick={onOpenEditor} />
+            {!hasCoworkRoom && <MenuItem label="같이 작업하기" onClick={onOpenCowork} />}
+            <MenuItem label="친구" onClick={onOpenFriends} />
+            <MenuItem
+              label="항상 위"
+              onClick={onToggleAlwaysOnTop}
+              trailing={<span style={{ color: alwaysOnTop ? "#7fd490" : "#5a5f68" }}>{alwaysOnTop ? "✓" : ""}</span>}
+            />
+            <MenuItem label="설정" onClick={onOpenSettings} />
+            <div style={divider} />
+            <MenuItem label="숨기기" onClick={onHide} />
+            <MenuItem label="종료" onClick={onQuit} />
+          </>
+        )}
+      </div>
     </div>
   );
-}
+});
+
+export default DesktopMenu;

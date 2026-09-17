@@ -94,6 +94,13 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // main.ts's applyLayout().
   setParticipantCount: (count: number) => ipcRenderer.invoke("desktop:setParticipantCount", count),
 
+  // Character menu bounds expansion (bug fix - "설정창/메뉴가 잘리는 문제") -
+  // still a thin IPC passthrough, all geometry lives in main.ts's
+  // applyMenuExpansion(). `null`/omitted edges collapse back to the
+  // compact window (see menuPlacement.ts's ZERO_EXPANSION).
+  setMenuExpansion: (next: { left: number; right: number; top: number; bottom: number } | null) =>
+    ipcRenderer.invoke("desktop:setMenuExpansion", next),
+
   // Windows auto-update (electron/updater.ts owns all real state/logic -
   // every method here is still a thin IPC passthrough, same convention as
   // everything above). A no-op-shaped resolve in development (updater.ts's

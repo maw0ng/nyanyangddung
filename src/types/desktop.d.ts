@@ -115,6 +115,12 @@ declare global {
      * participant count changes (join/leave/Realtime update/app-restart
      * restore). Safe to call with the same count repeatedly (no-ops). */
     setParticipantCount: (count: number) => Promise<void>;
+    /** Character menu bounds expansion (bug fix - "설정창/메뉴가 잘리는
+     * 문제") - `null` (or all-zero edges) restores the compact window. See
+     * menuPlacement.ts's own doc comment for the coordinate contract. */
+    setMenuExpansion: (
+      next: { left: number; right: number; top: number; bottom: number } | null
+    ) => Promise<void>;
 
     /** Windows auto-update (electron/updater.ts) - current state snapshot;
      * `currentVersion` is always app.getVersion() (never hardcoded in the

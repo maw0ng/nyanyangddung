@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
 import MiniWaffleHairScene, {
@@ -60,7 +60,6 @@ import AvatarScaleSettings from "./settings/AvatarScaleSettings";
 import { useAppUpdater } from "./updater/useAppUpdater";
 import UpdateMenuSection from "./updater/UpdateMenuSection";
 import UpdateReadyBanner from "./updater/UpdateReadyBanner";
-import type { DesktopAvatarLayout } from "./desktopAvatarLayout";
 import { calculateGrowth } from "./growth/growthConfig";
 import { useAuthSession } from "../../lib/supabase/useAuthSession";
 import { profileService } from "../../lib/supabase/profileService";
@@ -68,7 +67,8 @@ import { useCoWorkRoom } from "../../lib/supabase/useCoWorkRoom";
 import CoWorkMenuSection from "./cowork/CoWorkMenuSection";
 import { useDesktopParticipants } from "./cowork/desktopParticipant";
 import DesktopParticipantGrid, { type DesktopParticipantGridHandle } from "./cowork/DesktopParticipantGrid";
-import { computeLocalSlotOrigin } from "./cowork/desktopParticipantLayout";
+import { computeGridWindowSize } from "./cowork/desktopParticipantLayout";
+import { computeMenuPlacement } from "./menuPlacement";
 import { useCoworkTimerSync } from "./cowork/useCoworkTimerSync";
 import { useCoworkRoomStates } from "./cowork/useCoworkRoomStates";
 import { useAvatarAppearancePublish } from "./cowork/useAvatarAppearancePublish";
@@ -349,16 +349,81 @@ export default function DesktopAvatarScene() {
     null
   );
 
-  // Freezes the menu's own anchor layout for as long as the "설정" panel
-  // (and its size slider) is open - without this, dragging the slider
-  // would continuously reposition the very menu panel the slider lives in
-  // (since the menu's anchor tracks the live, shrinking/growing avatar),
-  // which could fight a still-in-progress native <input type=range> drag
-  // under the user's own cursor. Captured fresh each time settingsOpen
-  // transitions to true, so opening settings again later still starts from
-  // the avatar's current position/scale.
-  const frozenMenuLayoutRef = useRef<DesktopAvatarLayout | null>(null);
-  const menuLayout = settingsOpen ? frozenMenuLayoutRef.current ?? layout : layout;
+  // Bug fix ("설정창/메뉴가 BrowserWindow 크기 때문에 잘리는 문제") - the
+  // menu's position/size is now measured and collision-avoided directly
+  // (menuRef/menuPosition/menuContentOffset below) instead of derived from
+  // a fixed layout-based anchor, so there is no longer a separate "frozen
+  // layout snapshot" needed just to stop the "설정" panel's Avatar Scale
+  // slider from fighting the menu's own position - the placement effect
+  // below simply doesn't re-run while settingsOpen stays unchanged (see its
+  // own dependency array), which is the exact same "freeze while adjusting
+  // the slider" behavior this used to need a separate ref for.
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [menuContentOffset, setMenuContentOffset] = useState<{ left: number; top: number }>({
+    left: 0,
+    top: 0,
+  });
+  const menuContentOffsetRef = useRef(menuContentOffset);
+  menuContentOffsetRef.current = menuContentOffset;
+
+  // The single place the character menu's collision-avoided position (and,
+  // when the compact window itself is too small, the Electron bounds
+  // expansion that makes room for it) is computed - PART 4/5/6/7/13. Reruns
+  // on open/close and whenever settingsOpen toggles (the menu's own
+  // rendered size changes between the normal view and the "설정" sub-panel)
+  // - deliberately NOT keyed on avatarScale/layout, so dragging the Avatar
+  // Scale slider inside "설정" never fights the menu's own position (same
+  // intent the old frozen-layout-ref used to serve).
+  useLayoutEffect(() => {
+    if (!menuOpen) {
+      setMenuPosition(null);
+      const offset = menuContentOffsetRef.current;
+      if (offset.left !== 0 || offset.top !== 0) {
+        setMenuContentOffset({ left: 0, top: 0 });
+        void window.desktopAPI?.setMenuExpansion(null);
+      }
+      return;
+    }
+
+    const avatarLiveRect = participantGridRef.current?.getLocalSlotRect();
+    const menuEl = menuRef.current;
+    if (!avatarLiveRect || !menuEl) return;
+
+    // Undo whatever content offset is CURRENTLY applied so the placement
+    // math below always works in the compact (pre-expansion) coordinate
+    // space, regardless of whether this is the very first placement or a
+    // re-measurement while already expanded (e.g. switching into "설정").
+    const currentOffset = menuContentOffsetRef.current;
+    const avatarRect = {
+      x: avatarLiveRect.x - currentOffset.left,
+      y: avatarLiveRect.y - currentOffset.top,
+      width: avatarLiveRect.width,
+      height: avatarLiveRect.height,
+    };
+    const menuRect = menuEl.getBoundingClientRect();
+    const grid = computeGridWindowSize(layout, participants.length);
+
+    const placement = computeMenuPlacement(
+      avatarRect,
+      { width: menuRect.width, height: menuRect.height },
+      { width: grid.width, height: grid.height }
+    );
+
+    setMenuPosition({ top: placement.top, left: placement.left });
+
+    const needsExpansion =
+      placement.expansion.left > 0 ||
+      placement.expansion.right > 0 ||
+      placement.expansion.top > 0 ||
+      placement.expansion.bottom > 0;
+    const nextOffset = { left: placement.expansion.left, top: placement.expansion.top };
+    if (nextOffset.left !== currentOffset.left || nextOffset.top !== currentOffset.top) {
+      setMenuContentOffset(nextOffset);
+    }
+    void window.desktopAPI?.setMenuExpansion(needsExpansion ? placement.expansion : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuOpen, settingsOpen]);
 
   // Combined "should the OS deliver clicks to us right now" signal - only
   // true while actually over the character, over the floating menu, or
@@ -453,9 +518,8 @@ export default function DesktopAvatarScene() {
   }, []);
 
   const handleOpenSettings = useCallback(() => {
-    frozenMenuLayoutRef.current = layout;
     setSettingsOpen(true);
-  }, [layout]);
+  }, []);
   const handleCloseSettings = useCallback(() => {
     setSettingsOpen(false);
   }, []);
@@ -638,16 +702,6 @@ export default function DesktopAvatarScene() {
 
   const { ambient, key, fill } = lightIntensitiesFor(toonSettings, 0.8, 1.2, 0.4);
 
-  // Local's own on-screen slot offset within the (possibly multi-avatar)
-  // grid (section 12/17) - 0,0 whenever there's no active Room (identical
-  // to today), otherwise wherever assignParticipantGrid puts the local
-  // cell. Used only to keep the Floating Menu anchored next to Local's
-  // ACTUAL avatar - everything else about Local's own rendering is
-  // unaffected by this offset (DesktopParticipantGrid positions the cell
-  // itself; Local's own content never needs to know its own screen
-  // position).
-  const localSlotOrigin = computeLocalSlotOrigin(participants, layout);
-
   // Local's existing content - IDENTICAL to before the cowork-room grid
   // existed (ProfileHUD, LevelUpBanner, the character Canvas with every
   // scene component, TimerHUD - section 1/4). Extracted into a variable
@@ -816,9 +870,16 @@ export default function DesktopAvatarScene() {
         Pinned to the window's top-left, exactly like the old single-avatar
         DesktopAvatarArea wrapper - DesktopParticipantGrid arranges however
         many slots the current Room has (1 when there's no active Room,
-        identical to before - section 13) inside here.
+        identical to before - section 13) inside here. Bug fix ("설정창/
+        메뉴가 BrowserWindow 크기 때문에 잘리는 문제", PART 7): offset by
+        menuContentOffset whenever the character menu has asked Electron to
+        expand the window on its left/top edge - the window's own bounds
+        already shifted by the exact same amount the OPPOSITE way (see
+        electron/main.ts's applyMenuExpansion), so this keeps the avatar's
+        actual on-screen position pixel-identical whether or not the menu
+        is currently expanding anything.
       */}
-      <div style={{ position: "absolute", top: 0, left: 0 }}>
+      <div style={{ position: "absolute", top: menuContentOffset.top, left: menuContentOffset.left }}>
         <DesktopParticipantGrid
           ref={participantGridRef}
           participants={participants}
@@ -833,9 +894,9 @@ export default function DesktopAvatarScene() {
       </div>
 
       <DesktopMenu
+        ref={menuRef}
         open={menuOpen}
-        layout={menuLayout}
-        anchorOffset={localSlotOrigin}
+        position={menuPosition}
         alwaysOnTop={alwaysOnTop}
         onOpenEditor={handleOpenEditor}
         onOpenFriends={handleOpenFriends}
@@ -844,6 +905,7 @@ export default function DesktopAvatarScene() {
         onToggleAlwaysOnTop={handleToggleAlwaysOnTop}
         onHide={handleHide}
         onQuit={handleQuit}
+        onRequestClose={() => setMenuOpen(false)}
         onMouseEnter={() => setMenuHover(true)}
         onMouseLeave={() => setMenuHover(false)}
         timerSection={

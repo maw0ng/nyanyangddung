@@ -21,6 +21,13 @@ export interface DesktopParticipantGridHandle {
   /** Commits Local's current live-dragged position to the persisted local
    * layout (coworkLocalLayoutStorage.ts) - called once on pointer-up. */
   commitLocalDrag: () => void;
+  /** Local's own cell wrapper's LIVE on-screen rect (bug fix - "설정창/메뉴가
+   * BrowserWindow 크기 때문에 잘리는 문제", PART 20's "participant index/slot
+   * index 기준으로 계산하지 않는다... 실제 screen-space position을 사용한다") -
+   * reads the actual DOM element's getBoundingClientRect(), so it's always
+   * correct regardless of default grid slot vs a free-placement drag
+   * override. `null` before the local cell has ever mounted. */
+  getLocalSlotRect: () => DOMRect | null;
 }
 
 /**
@@ -205,6 +212,12 @@ function DesktopParticipantGrid(
         const localCell = findCell((c) => c.isLocalSlot);
         if (!localCell) return;
         commitDrag(localCell.participant.userId);
+      },
+      getLocalSlotRect: () => {
+        const localCell = findCell((c) => c.isLocalSlot);
+        if (!localCell) return null;
+        const el = cellElementsRef.current.get(localCell.participant.userId);
+        return el?.getBoundingClientRect() ?? null;
       },
     }),
     [findCell, applyDragDelta, commitDrag]

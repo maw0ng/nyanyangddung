@@ -186,13 +186,13 @@ export function flattenParticipantGrid(
 
 /** Pixel offset of the LOCAL slot's own top-left corner within the whole
  * grid (0,0 when there's only 1 participant - section 13's "기존과 최대한
- * 동일"). The Floating Menu (DesktopMenu.tsx) is still anchored relative
- * to a single avatar's own layout box (menuAnchorFor in
- * ../desktopAvatarLayout.ts, unchanged) - this offset is added on top so
- * the menu keeps appearing next to Local's actual on-screen avatar even
- * when Local isn't at the grid's own (0,0) origin (2/3/4-participant
- * layouts always put Local in the bottom-right cell - see
- * assignParticipantGrid above). */
+ * 동일"). Not currently called by anything - the Floating Menu
+ * (DesktopMenu.tsx) now measures Local's actual on-screen rect directly via
+ * DesktopParticipantGrid's getLocalSlotRect() (see menuPlacement.ts's bug
+ * fix - "설정창/메뉴가 BrowserWindow 크기 때문에 잘리는 문제", PART 20's
+ * "participant index 기준으로 계산하지 않는다") rather than this
+ * grid-math-derived offset. Kept as a still-correct, independently useful
+ * utility rather than deleted. */
 export function computeLocalSlotOrigin(
   participants: DesktopParticipant[],
   layout: DesktopAvatarLayout

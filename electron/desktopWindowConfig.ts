@@ -125,6 +125,30 @@ export const COWORK_ROUTE = "/cowork";
  * DESKTOP_WINDOW_MARGIN's own "always exactly N px" convention). */
 export const GRID_GAP = 16;
 
+// ============================================================================
+// Character menu bounds expansion (bug fix - "설정창/메뉴가 BrowserWindow
+// 크기 때문에 잘리는 문제") - mirrored (not imported, same electron/src
+// boundary reason as everything else here) by
+// src/components/avatar-desktop/menuPlacement.ts's own MenuExpansion type.
+// ============================================================================
+
+/** Extra px the transparent BrowserWindow needs beyond its current compact
+ * grid size, one non-negative number per edge, ONLY while the character
+ * menu is open and doesn't fit the compact window even after flipping to
+ * its best side (PART 4/5/6 - collision detection first, window expansion
+ * only as the fallback it's designed to rarely need). `left`/`top` also
+ * describe how far the window's own x/y must shift (see applyMenuExpansion
+ * in main.ts) - the Renderer shifts its own content the OPPOSITE way by the
+ * same amount so the avatar's on-screen position never jumps (PART 7). */
+export interface MenuExpansion {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+export const ZERO_MENU_EXPANSION: MenuExpansion = { left: 0, right: 0, top: 0, bottom: 0 };
+
 /** Per-avatar-slot geometry for a given participantCount, derived from the
  * same computeWindowSize() single-avatar math (section 19 - "정확한 px은
  * 현재 desktop camera/avatarScale/HUD 크기를 조사해서 결정" - this reuses

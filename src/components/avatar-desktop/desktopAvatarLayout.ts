@@ -37,16 +37,6 @@ const BASE_CANVAS_HEIGHT = DESKTOP_CHARACTER_CANVAS_HEIGHT;
 const BASE_PROFILE_STRIP_HEIGHT = 46;
 const BASE_HUD_STRIP_HEIGHT = 90;
 
-/** The floating menu's tuned-at-100% offset from the top of the canvas
- * (70 - 46 = 24, see desktopInteractionConfig.ts's old MENU_ANCHOR
- * history) - scales with avatarScale since it's meant to track a point on
- * the character (roughly chest height), not a page-relative constant. */
-const MENU_TOP_WITHIN_CANVAS = 24;
-/** Right-edge margin the menu keeps from the window's own right edge,
- * regardless of scale. */
-const MENU_RIGHT_MARGIN = 8;
-const MENU_MIN_LEFT = 4;
-
 export function clampAvatarScale(value: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return AVATAR_SCALE_DEFAULT;
   return Math.min(AVATAR_SCALE_MAX, Math.max(AVATAR_SCALE_MIN, value));
@@ -91,15 +81,4 @@ export function computeDesktopAvatarLayout(rawScale: number): DesktopAvatarLayou
     windowWidth: canvasWidth,
     windowHeight: profileStripHeight + canvasHeight + hudStripHeight,
   };
-}
-
-/** Where the floating menu anchors (section 21/26) - tracks the avatar's
- * own position/scale instead of a fixed pixel offset, and keeps its right
- * edge a fixed margin inside the window's current (scale-dependent) width
- * rather than overflowing it at small scales. */
-export function menuAnchorFor(layout: DesktopAvatarLayout, menuWidth: number): { top: number; left: number } {
-  const idealLeft = layout.windowWidth - menuWidth - MENU_RIGHT_MARGIN;
-  const left = Math.max(MENU_MIN_LEFT, idealLeft);
-  const top = layout.profileStripHeight + Math.round(MENU_TOP_WITHIN_CANVAS * layout.avatarScale);
-  return { top, left };
 }
