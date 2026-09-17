@@ -72,6 +72,18 @@ interface DesktopMenuProps {
    * "같이 작업하기" item out for `coworkSection`'s room summary instead
    * (section 17/42 of the cowork-room brief). */
   hasCoworkRoom: boolean;
+  /** Feature - "CoWork 친구 Avatar 위치 초기화": resets every REMOTE
+   * participant's user-dragged free-placement position back to the default
+   * CoWork grid layout, on THIS viewer's own screen only (never touches
+   * Supabase/Realtime/the local Avatar's own position). Only ever rendered
+   * while `hasCoworkRoom` is true. */
+  onResetFriendPositions: () => void;
+  /** True for a couple seconds right after `onResetFriendPositions` fires -
+   * shows a short "친구 위치를 초기화했어요." confirmation under the button
+   * (section 24 - reuses this component's own text styling rather than a
+   * new toast dependency; the parent owns the show/auto-hide timer, same
+   * pattern as LevelUpBanner). */
+  resetFriendPositionsFeedback: boolean;
   onToggleAlwaysOnTop: () => void;
   onHide: () => void;
   onQuit: () => void;
@@ -124,6 +136,8 @@ const DesktopMenu = forwardRef<HTMLDivElement, DesktopMenuProps>(function Deskto
     onOpenFriends,
     onOpenCowork,
     hasCoworkRoom,
+    onResetFriendPositions,
+    resetFriendPositionsFeedback,
     onToggleAlwaysOnTop,
     onHide,
     onQuit,
@@ -250,6 +264,17 @@ const DesktopMenu = forwardRef<HTMLDivElement, DesktopMenuProps>(function Deskto
               trailing={<span style={{ color: alwaysOnTop ? "#7fd490" : "#5a5f68" }}>{alwaysOnTop ? "✓" : ""}</span>}
             />
             <MenuItem label="설정" onClick={onOpenSettings} />
+            {hasCoworkRoom && (
+              <>
+                <div style={divider} />
+                <MenuItem label="친구 위치 초기화" onClick={onResetFriendPositions} />
+                {resetFriendPositionsFeedback && (
+                  <div style={{ padding: "0 12px 6px", fontSize: 11, color: "#7fd490" }}>
+                    친구 위치를 초기화했어요.
+                  </div>
+                )}
+              </>
+            )}
             <div style={divider} />
             <MenuItem label="숨기기" onClick={onHide} />
             <MenuItem label="종료" onClick={onQuit} />

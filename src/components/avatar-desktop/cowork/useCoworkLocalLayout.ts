@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { loadRoomLayout, saveParticipantPosition, type LayoutPosition } from "./coworkLocalLayoutStorage";
+import {
+  loadRoomLayout,
+  saveParticipantPosition,
+  removeParticipantPositions,
+  type LayoutPosition,
+} from "./coworkLocalLayoutStorage";
 
 /**
  * React-state layer over coworkLocalLayoutStorage.ts (section 18/19/20 of
@@ -42,5 +47,29 @@ export function useCoworkLocalLayout(roomId: string | null) {
     saveParticipantPosition(currentRoomId, userId, position);
   }, []);
 
-  return { getPosition, setPosition };
+  /** Feature - "CoWork 친구 Avatar 위치 초기화": drops exactly the given
+   * userIds' overrides (never a blanket clear - see coworkLocalLayoutStorage's
+   * own removeParticipantPositions doc comment for why), so the next render
+   * naturally falls back to the caller's default grid position for those
+   * userIds via getPosition's own `overrides[userId] ?? fallback`. Any userId
+   * NOT passed in (the local user, in every real caller) keeps its own
+   * override completely untouched. */
+  const resetOverrides = useCallback((userIds: string[]) => {
+    const currentRoomId = roomIdRef.current;
+    if (!currentRoomId || userIds.length === 0) return;
+    setOverrides((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const userId of userIds) {
+        if (userId in next) {
+          delete next[userId];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    removeParticipantPositions(currentRoomId, userIds);
+  }, []);
+
+  return { getPosition, setPosition, resetOverrides };
 }

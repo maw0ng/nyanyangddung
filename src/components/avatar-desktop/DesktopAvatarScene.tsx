@@ -533,6 +533,27 @@ export default function DesktopAvatarScene() {
     window.desktopAPI?.quit();
   }, []);
 
+  // Feature - "CoWork 친구 Avatar 위치 초기화": drops every REMOTE
+  // participant's user-dragged free-placement override for THIS viewer's
+  // own screen only (DesktopParticipantGrid's resetRemoteLayout - local-only
+  // localStorage, never Supabase/Realtime - see coworkLocalLayoutStorage.ts's
+  // own doc comment). Never touches the Local Avatar's own position, never
+  // remounts any Avatar (a plain re-render with the default grid position),
+  // and never closes the Character Menu itself.
+  const [friendResetFeedback, setFriendResetFeedback] = useState(false);
+  const friendResetFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleResetFriendPositions = useCallback(() => {
+    participantGridRef.current?.resetRemoteLayout();
+    setFriendResetFeedback(true);
+    if (friendResetFeedbackTimerRef.current) clearTimeout(friendResetFeedbackTimerRef.current);
+    friendResetFeedbackTimerRef.current = setTimeout(() => setFriendResetFeedback(false), 1600);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (friendResetFeedbackTimerRef.current) clearTimeout(friendResetFeedbackTimerRef.current);
+    };
+  }, []);
+
   const handleFaceDebugUpdate = useCallback((patch: Partial<FaceDebugInfo>) => {
     setFaceDebugInfo((prev) => ({ ...prev, ...patch }));
   }, []);
@@ -902,6 +923,8 @@ export default function DesktopAvatarScene() {
         onOpenFriends={handleOpenFriends}
         onOpenCowork={handleOpenCowork}
         hasCoworkRoom={!!coworkRoom.room}
+        onResetFriendPositions={handleResetFriendPositions}
+        resetFriendPositionsFeedback={friendResetFeedback}
         onToggleAlwaysOnTop={handleToggleAlwaysOnTop}
         onHide={handleHide}
         onQuit={handleQuit}

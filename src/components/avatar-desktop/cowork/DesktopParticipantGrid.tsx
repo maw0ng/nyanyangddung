@@ -28,6 +28,13 @@ export interface DesktopParticipantGridHandle {
    * correct regardless of default grid slot vs a free-placement drag
    * override. `null` before the local cell has ever mounted. */
   getLocalSlotRect: () => DOMRect | null;
+  /** Feature - "CoWork 친구 Avatar 위치 초기화": drops every CURRENT remote
+   * participant's saved free-placement override for this room (never the
+   * local user's own - see useCoworkLocalLayout's resetOverrides doc
+   * comment), so each remote cell's `pos` falls back to its normal
+   * assignParticipantGrid/flattenParticipantGrid default position on the
+   * very next render - no Avatar remount, no network call. */
+  resetRemoteLayout: () => void;
 }
 
 /**
@@ -90,7 +97,7 @@ function DesktopParticipantGrid(
   const cellElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const liveDragPositionRef = useRef<Map<string, LayoutPosition>>(new Map());
 
-  const { getPosition, setPosition } = useCoworkLocalLayout(roomId);
+  const { getPosition, setPosition, resetOverrides } = useCoworkLocalLayout(roomId);
 
   const makeHoverHandler = useCallback(
     (userId: string) => (hovering: boolean) => {
@@ -219,8 +226,18 @@ function DesktopParticipantGrid(
         const el = cellElementsRef.current.get(localCell.participant.userId);
         return el?.getBoundingClientRect() ?? null;
       },
+      resetRemoteLayout: () => {
+        const remoteIds = participants.filter((p) => !p.isLocal).map((p) => p.userId);
+        if (remoteIds.length === 0) return;
+        // Defensive: never leaves a stale in-flight drag position around for
+        // a userId whose saved override was just dropped (not a real
+        // scenario the button itself can trigger, but keeps this safe if
+        // ever called while a drag is somehow still open).
+        for (const id of remoteIds) liveDragPositionRef.current.delete(id);
+        resetOverrides(remoteIds);
+      },
     }),
-    [findCell, applyDragDelta, commitDrag]
+    [findCell, applyDragDelta, commitDrag, participants, resetOverrides]
   );
 
   return (

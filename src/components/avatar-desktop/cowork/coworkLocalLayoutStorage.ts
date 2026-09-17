@@ -63,3 +63,27 @@ export function saveParticipantPosition(roomId: string, userId: string, position
   all[roomId] = room;
   writeAll(all);
 }
+
+/** Feature - "CoWork 친구 Avatar 위치 초기화": removes ONLY the given
+ * userIds' saved overrides for this room, leaving every other room (and
+ * any OTHER userId in this same room - notably the local user, and any
+ * already-departed participant's leftover entry) completely untouched. A
+ * userId with no saved override is silently a no-op, never an error
+ * (section 22 - a since-left participant must never throw here). */
+export function removeParticipantPositions(roomId: string, userIds: string[]) {
+  if (!roomId || userIds.length === 0) return;
+  const all = readAll();
+  const room = all[roomId];
+  if (!room) return;
+  const next = { ...room };
+  let changed = false;
+  for (const userId of userIds) {
+    if (userId in next) {
+      delete next[userId];
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  all[roomId] = next;
+  writeAll(all);
+}
