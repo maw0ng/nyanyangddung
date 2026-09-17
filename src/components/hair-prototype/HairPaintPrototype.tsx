@@ -858,6 +858,16 @@ export default function HairPaintPrototype() {
       customizations: { ...cosmeticCustomizationsRef.current },
     };
 
+    const morphValues = faceHandle.getMorphValues();
+    // [MorphTrace:CharacterPreset] (diagnostic - "Remote Avatar Morph 동기화
+    // 안 됨") - the exact live morphTargetInfluences values read off the
+    // Editor's own FacePaintScene meshes at gather-time, before anything
+    // else in the pipeline (export/allowlist/publish) has touched them.
+    devLog(
+      "[MorphTrace:CharacterPreset] count=", Object.keys(morphValues).length,
+      "nonZero=", Object.fromEntries(Object.entries(morphValues).filter(([, v]) => v !== 0))
+    );
+
     return {
       hair: { layers: hairData.layers },
       face: {
@@ -865,7 +875,7 @@ export default function HairPaintPrototype() {
         eye: { layers: faceData.eyeLayers, overrideTexture: faceData.eyeOverrideTexture },
       },
       clothing: { materials: topsData.materials },
-      morphValues: faceHandle.getMorphValues(),
+      morphValues,
       cosmetics,
       toon: toonSettings,
     };

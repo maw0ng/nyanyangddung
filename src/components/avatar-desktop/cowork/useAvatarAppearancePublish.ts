@@ -70,7 +70,21 @@ export function useAvatarAppearancePublish(roomId: string | null, userId: string
         const blob = await buildAppearanceOverlay(surface);
         if (blob) topsOverlays[material] = blob;
       }
+      // [MorphTrace:ExportInput]/[MorphTrace:ExportOutput] (diagnostic -
+      // "Remote Avatar Morph 동기화 안 됨") - compares the raw CharacterPreset
+      // morphValues this publish pass read from IndexedDB against what
+      // survives filterCustomizationMorphs' allowlist/clamp, so an
+      // allowlist-miss (Editor uses a key filterCustomizationMorphs doesn't
+      // recognize) shows up as a count/key drop right here.
+      devLog(
+        "[MorphTrace:ExportInput] count=", Object.keys(appearance.morphValues ?? {}).length,
+        "nonZero=", Object.fromEntries(Object.entries(appearance.morphValues ?? {}).filter(([, v]) => v !== 0))
+      );
       const morphValues = filterCustomizationMorphs(appearance.morphValues);
+      devLog(
+        "[MorphTrace:ExportOutput] count=", Object.keys(morphValues).length,
+        "nonZero=", Object.fromEntries(Object.entries(morphValues).filter(([, v]) => v !== 0))
+      );
 
       // Toon (bug fix - per-user Network Appearance data, not a
       // Local-only preference): the SAME field the Editor now saves into

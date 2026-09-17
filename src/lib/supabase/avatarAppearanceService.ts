@@ -13,6 +13,7 @@ import type {
   NetworkAppearanceManifest,
   NetworkCosmeticHead,
 } from "./database.types";
+import { devLog } from "../devLog";
 
 export type AppearanceResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -113,6 +114,19 @@ function sanitizeCosmeticHead(row: AvatarAppearanceManifestRow): NetworkCosmetic
 
 function mapRow(row: AvatarAppearanceManifestRow): NetworkAppearanceManifest {
   const cosmeticHead = sanitizeCosmeticHead(row);
+  const morphValues = sanitizeMorphValues(row.morph_values);
+  // [MorphTrace:RemoteManifest] (diagnostic - "Remote Avatar Morph 동기화
+  // 안 됨") - the RAW DB row's morph_values column vs. what survives
+  // sanitizeMorphValues here, for every getManifest/getManifests call (both
+  // the publisher's own fresh-revision read and every Remote client's
+  // fetch/refetch go through this same mapRow).
+  devLog(
+    "[MorphTrace:RemoteManifest] userId=", row.user_id,
+    "revision=", row.revision,
+    "rawMorphCount=", row.morph_values && typeof row.morph_values === "object" ? Object.keys(row.morph_values as object).length : 0,
+    "sanitizedCount=", Object.keys(morphValues).length,
+    "nonZero=", Object.fromEntries(Object.entries(morphValues).filter(([, v]) => v !== 0))
+  );
   return {
     userId: row.user_id,
     schemaVersion: typeof row.schema_version === "number" ? row.schema_version : 1,
@@ -121,7 +135,7 @@ function mapRow(row: AvatarAppearanceManifestRow): NetworkAppearanceManifest {
     faceBaseOverlayPath: row.face_base_overlay_path ?? null,
     faceEyeOverlayPath: row.face_eye_overlay_path ?? null,
     topsOverlayPaths: sanitizeRecord(row.tops_overlay_paths),
-    morphValues: sanitizeMorphValues(row.morph_values),
+    morphValues,
     cosmeticHead,
     // No point keeping a paint overlay reference for a cosmetic we just
     // decided not to trust/attach at all.

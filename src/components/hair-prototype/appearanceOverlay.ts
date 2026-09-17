@@ -1,6 +1,11 @@
 import { canvasToPngBlob } from "./textureIO";
 import { MORPH_CATEGORIES, BODY_SHAPE_MORPH_NAMES } from "./morphConfig";
 import type { CharacterSurfaceLayers, StoredPaintLayer } from "./types";
+import { devLog } from "../../lib/devLog";
+
+/** [MorphTrace:Allowlist] diagnostic test keys - same set
+ * remoteAppearanceApply.ts's MORPH_TRACE_TEST_KEYS traces further downstream. */
+const MORPH_TRACE_TEST_KEYS = ["shrink", "eye-smile_left", "ppl-lookL", "brw-oko_left", "mouth-smile"];
 
 /**
  * Builds the Network Appearance Snapshot's transparent paint-only overlay
@@ -108,9 +113,18 @@ export function filterCustomizationMorphs(values: Record<string, number>): Recor
   const out: Record<string, number> = {};
   for (const [name, value] of Object.entries(values)) {
     const allowed = MORPH_CATEGORIES.some((c) => c.match(name)) || BODY_SHAPE_MORPH_NAMES.includes(name);
+    if (MORPH_TRACE_TEST_KEYS.includes(name)) {
+      devLog("[MorphTrace:Allowlist] key=", name, "allowed=", allowed);
+    }
     if (!allowed) continue;
     if (typeof value !== "number" || !Number.isFinite(value)) continue;
     out[name] = Math.max(0, Math.min(1, value));
+  }
+  // Also report any trace key that never showed up in `values` at all
+  // (never reached the allowlist step in the first place - a CharacterPreset
+  // gap, not an allowlist gap).
+  for (const key of MORPH_TRACE_TEST_KEYS) {
+    if (!(key in values)) devLog("[MorphTrace:Allowlist] key=", key, "allowed=", "N/A (not present in CharacterPreset morphValues)");
   }
   return out;
 }

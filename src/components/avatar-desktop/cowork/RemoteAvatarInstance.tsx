@@ -248,6 +248,67 @@ function RemoteAvatarInstance(
       toonTargets,
     };
 
+    // [MorphTrace:FullSceneDump] (diagnostic - "eye/pupil Morph만 Remote에
+    // 반영 안 됨") - EVERY node in this clone's scene graph, not just the 6
+    // labels bodyMorphMeshes traverses, to rule out a separate eye/pupil-only
+    // mesh (e.g. a decorative iris/eyeball node) that the fixed label list
+    // above silently never collects.
+    {
+      const allNodes: { name: string; type: string; hasMorphDict: boolean; morphNames: string[] }[] = [];
+      clone.traverse((o) => {
+        const m = o as THREE.Mesh & { morphTargetDictionary?: Record<string, number> };
+        allNodes.push({
+          name: o.name,
+          type: o.type,
+          hasMorphDict: !!m.morphTargetDictionary,
+          morphNames: m.morphTargetDictionary ? Object.keys(m.morphTargetDictionary) : [],
+        });
+      });
+      devLog("[MorphTrace:FullSceneDump] user=", userId, "nodes=", JSON.stringify(allNodes));
+    }
+
+    // [MorphTrace:MorphDeltaMagnitude] (diagnostic - "eye/pupil Morph만
+    // Remote에 반영 안 됨") - sums the raw per-vertex displacement magnitude
+    // baked into the parsed geometry for a working target (mouth-smile) vs
+    // a broken one (eye-smile_left, ppl-lookL), to rule out a parse-time
+    // decode bug (e.g. a sparse-accessor morph target coming out all-zero
+    // from this instance's own separate GLTFLoader parse) independent of
+    // anything the influence-apply step does.
+    for (const mesh of bodyMorphMeshes) {
+      const dict = mesh.morphTargetDictionary;
+      const posAttrs = mesh.geometry?.morphAttributes?.position;
+      if (!dict || !posAttrs) continue;
+      for (const key of ["mouth-smile", "brw-oko_left", "eye-smile_left", "ppl-lookL", "shrink"]) {
+        const idx = dict[key];
+        if (idx === undefined) continue;
+        const attr = posAttrs[idx];
+        if (!attr) continue;
+        let sumAbs = 0;
+        for (let i = 0; i < attr.array.length; i++) sumAbs += Math.abs(attr.array[i]);
+        devLog(
+          "[MorphTrace:MorphDeltaMagnitude] mesh=", mesh.name, "key=", key,
+          "index=", idx, "vertexCount=", attr.count, "sumAbsDelta=", sumAbs
+        );
+      }
+    }
+
+    // [MorphTrace:GLBDictionary] (diagnostic - "Remote Avatar Morph 동기화
+    // 안 됨") - the actual runtime morphTargetDictionary this CLONE's own
+    // meshes carry, dumped once per instance mount. Confirms (or disproves)
+    // that SkeletonUtils.clone()/collectMaterialTargets() actually preserved
+    // morph target data on this Remote instance's own geometry, independent
+    // of anything the network/manifest side does.
+    for (const mesh of bodyMorphMeshes) {
+      const names = Object.keys(mesh.morphTargetDictionary ?? {});
+      devLog(
+        "[MorphTrace:GLBDictionary] user=", userId, "mesh=", mesh.name,
+        "morphCount=", names.length,
+        "hasTraceKeys=", Object.fromEntries(
+          ["shrink", "eye-smile_left", "ppl-lookL", "brw-oko_left", "mouth-smile"].map((k) => [k, mesh.morphTargetDictionary?.[k]])
+        )
+      );
+    }
+
     // Same AvatarAnimationController class Local uses (section 28) - its
     // own doc comment already anticipates exactly this "one instance per
     // avatar-in-a-room" reuse, so no new animation engine is written here.
@@ -294,6 +355,17 @@ function RemoteAvatarInstance(
   useEffect(() => {
     if (!cloneRef.current || !appearanceTargetsRef.current) return;
     if (!appearance) return;
+    // [MorphTrace:RemoteCache] (diagnostic - "Remote Avatar Morph 동기화 안
+    // 됨") - compares the just-received manifest's revision against what
+    // this instance has already applied, so a stale-cache/never-refetch
+    // symptom (received revision never actually higher than applied) shows
+    // up here rather than being inferred indirectly.
+    devLog(
+      "[MorphTrace:RemoteCache] userId=", userId,
+      "receivedRevision=", appearance.revision,
+      "appliedRevision=", appliedRevisionRef.current,
+      "willApply=", appearance.revision > appliedRevisionRef.current
+    );
     if (appearance.revision <= appliedRevisionRef.current) return;
     const targets = appearanceTargetsRef.current;
     const revision = appearance.revision;

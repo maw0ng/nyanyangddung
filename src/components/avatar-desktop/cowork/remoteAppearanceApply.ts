@@ -240,9 +240,16 @@ async function applyCosmeticHead(
  * 않음": "shrink" lives on a different mesh than the facial Shape Keys, so
  * a single-mesh apply silently dropped it; PART 2-12 also requires this
  * generally, for any name that happens to exist on more than one mesh). */
+/** [MorphTrace] diagnostic test keys ("Remote Avatar Morph 동기화 안 됨") -
+ * one representative name per category (morphConfig.ts), all confirmed to
+ * exist in the live GLB's dictionary. Traced through Dictionary Match /
+ * Influence Apply / several-frames-later below. */
+const MORPH_TRACE_TEST_KEYS = ["shrink", "eye-smile_left", "ppl-lookL", "brw-oko_left", "mouth-smile"];
+
 function applyMorphValues(meshes: THREE.Mesh[], morphValues: Record<string, number>): number {
   let applied = 0;
   for (const [name, value] of Object.entries(morphValues)) {
+    const isTraceKey = MORPH_TRACE_TEST_KEYS.includes(name);
     for (const mesh of meshes) {
       if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) continue;
       const index = mesh.morphTargetDictionary[name];
@@ -250,8 +257,37 @@ function applyMorphValues(meshes: THREE.Mesh[], morphValues: Record<string, numb
       // schema, a GLB mismatch, or simply "belongs to a different mesh") -
       // skip just this one, never throw (section 13).
       if (index === undefined) continue;
-      mesh.morphTargetInfluences[index] = Math.max(0, Math.min(1, value));
+      const before = mesh.morphTargetInfluences[index];
+      const next = Math.max(0, Math.min(1, value));
+      mesh.morphTargetInfluences[index] = next;
       applied++;
+      if (isTraceKey) {
+        devLog(
+          "[MorphTrace:DictionaryMatch] key=", name, "mesh=", mesh.name, "index=", index
+        );
+        devLog(
+          "[MorphTrace:InfluenceApply] key=", name, "mesh=", mesh.name, "index=", index,
+          "manifestValue=", value, "before=", before, "after=", mesh.morphTargetInfluences[index]
+        );
+        // Several-frames-later check (STEP 10) - read-only, no functional
+        // change: confirms whether something (e.g. an AnimationMixer track)
+        // silently overwrites this influence after this synchronous apply
+        // returns. Purely diagnostic - never used as a fix.
+        let framesLeft = 5;
+        const mesh_ = mesh;
+        const index_ = index;
+        const expected = next;
+        const checkFrame = () => {
+          const current = mesh_.morphTargetInfluences?.[index_];
+          devLog(
+            "[MorphTrace:AfterFrames] key=", name, "framesLeft=", framesLeft,
+            "expected=", expected, "current=", current
+          );
+          framesLeft--;
+          if (framesLeft > 0) requestAnimationFrame(checkFrame);
+        };
+        requestAnimationFrame(checkFrame);
+      }
     }
   }
   return applied;
