@@ -41,6 +41,16 @@ export const REQUIRED_CUSTOM_EYE_NAMES = [
   "custom-eye-4",
 ];
 
+/** The GLB's only genuine full-body-shape Shape Key, distinct from the
+ * facial categories above - lives on "Body-base", not "Body" (see
+ * FacePaintScene.tsx's BODY_SHAPE_NODE_NAME doc comment). Kept as its own
+ * explicit list (not folded into MORPH_CATEGORIES, which is specifically
+ * the "이목구비"/facial customizer's own categorization) so the Network
+ * Appearance export allowlist (appearanceOverlay.ts's
+ * filterCustomizationMorphs) can allow it alongside the facial categories
+ * without pretending it's a facial feature. */
+export const BODY_SHAPE_MORPH_NAMES = ["shrink"];
+
 /**
  * morphName -> display label. Deliberately a single flat map so it's easy
  * to hand-edit later (per the brief's explicit request) without touching

@@ -7,6 +7,7 @@ import { useThree } from "@react-three/fiber";
 import { collectMaterialTargets } from "../hair-prototype/textureIO";
 import { MODEL_URL } from "../hair-prototype/modelConfig";
 import { DRAG_THRESHOLD_PX } from "./desktopInteractionConfig";
+import { devLog } from "../../lib/devLog";
 
 // Same runtime-verified node names ToonStyleController already uses for
 // its own independent traversal of this GLB - re-declared locally rather
@@ -49,17 +50,19 @@ interface DesktopInteractionLayerProps {
   onCharacterHoverChange: (hovering: boolean) => void;
   onDraggingChange: (dragging: boolean) => void;
   onCharacterClick: () => void;
-  /** "window" (default, solo Desktop's original behavior - zero regression)
-   * drags the whole Electron BrowserWindow via desktopAPI, exactly as
-   * before. "layout" (CoWork free-placement bug/feature - "자신의 캐릭터...
-   * 마우스로 직접 드래그해서 원하는 위치로 옮길 수 있게") instead reports
-   * screen-space deltas through onLayoutDragMove/onLayoutDragEnd for the
-   * parent to apply to Local's own grid-cell position only - it never calls
-   * window.desktopAPI at all in this mode, so dragging your own avatar in a
-   * CoWork room can never also drag the window underneath every other
-   * participant's avatar too (PART 15's "한 번의 drag로 Avatar도 이동 +
-   * Electron window도 이동하면 안 된다"). */
-  dragMode: "window" | "layout";
+  /** Bug fix ("CoWork에서 Electron 창 이동이 안 되는 문제"): plain drag on
+   * Local's own avatar ALWAYS drags the whole Electron BrowserWindow, byte-
+   * for-byte the same gesture Solo Desktop always used (PART 1-4's "가능하면
+   * 현재 UX를 우선 유지" / "같은 방식으로 창을 옮길 수 있게") - this is true
+   * whether or not a CoWork Room is active, so window-move is never taken
+   * away by entering CoWork. `layoutDragAvailable` (true only while a Room
+   * is active) additionally allows a Shift-held drag to instead move Local's
+   * own on-screen grid position (the CoWork free-placement feature) -
+   * checked ONCE at the exact moment the drag threshold is crossed (see
+   * handlePointerMove below) and locked in for the rest of that single
+   * gesture, so one pointer-down->up motion always has exactly one owner
+   * (PART 1-5) and can never do both at once (PART 1-3). */
+  layoutDragAvailable: boolean;
   onLayoutDragMove?: (dx: number, dy: number) => void;
   onLayoutDragEnd?: () => void;
   onDebugUpdate?: (info: DesktopInteractionDebugInfo) => void;
@@ -82,7 +85,7 @@ export default function DesktopInteractionLayer({
   onCharacterHoverChange,
   onDraggingChange,
   onCharacterClick,
-  dragMode,
+  layoutDragAvailable,
   onLayoutDragMove,
   onLayoutDragEnd,
   onDebugUpdate,
@@ -98,7 +101,7 @@ export default function DesktopInteractionLayer({
   const onCharacterHoverChangeRef = useRef(onCharacterHoverChange);
   const onDraggingChangeRef = useRef(onDraggingChange);
   const onCharacterClickRef = useRef(onCharacterClick);
-  const dragModeRef = useRef(dragMode);
+  const layoutDragAvailableRef = useRef(layoutDragAvailable);
   const onLayoutDragMoveRef = useRef(onLayoutDragMove);
   const onLayoutDragEndRef = useRef(onLayoutDragEnd);
   const onDebugUpdateRef = useRef(onDebugUpdate);
@@ -107,7 +110,7 @@ export default function DesktopInteractionLayer({
     onCharacterHoverChangeRef.current = onCharacterHoverChange;
     onDraggingChangeRef.current = onDraggingChange;
     onCharacterClickRef.current = onCharacterClick;
-    dragModeRef.current = dragMode;
+    layoutDragAvailableRef.current = layoutDragAvailable;
     onLayoutDragMoveRef.current = onLayoutDragMove;
     onLayoutDragEndRef.current = onLayoutDragEnd;
     onDebugUpdateRef.current = onDebugUpdate;
@@ -144,6 +147,10 @@ export default function DesktopInteractionLayer({
     let dragAccum = { x: 0, y: 0 };
     let frameDelta = { x: 0, y: 0 };
     let dragUpdateScheduled = false;
+    // Locked in exactly once, the instant this gesture's drag threshold is
+    // crossed (never re-evaluated mid-drag, e.g. if the user releases Shift
+    // partway through) - see layoutDragAvailable's own doc comment above.
+    let dragTarget: "window" | "layout" = "window";
 
     function raycastHitsCharacter(clientX: number, clientY: number): boolean {
       const meshes = meshesRef.current;
@@ -176,7 +183,7 @@ export default function DesktopInteractionLayer({
       dragUpdateScheduled = true;
       requestAnimationFrame(() => {
         dragUpdateScheduled = false;
-        if (dragModeRef.current === "layout") {
+        if (dragTarget === "layout") {
           const { x, y } = frameDelta;
           frameDelta = { x: 0, y: 0 };
           if (x !== 0 || y !== 0) onLayoutDragMoveRef.current?.(x, y);
@@ -213,8 +220,15 @@ export default function DesktopInteractionLayer({
         const distance = Math.hypot(dragAccum.x, dragAccum.y);
         if (distance > DRAG_THRESHOLD_PX) {
           dragging = true;
+          // Ownership decided exactly once, right here, from the event that
+          // actually crossed the threshold (PART 1-5) - Shift held ->
+          // layout (avatar) drag, otherwise -> window drag, matching Solo
+          // Desktop's original plain-drag-moves-the-window gesture exactly
+          // whenever layout dragging isn't available or Shift isn't held.
+          dragTarget = layoutDragAvailableRef.current && e.shiftKey ? "layout" : "window";
+          devLog("[CoWorkWindowDrag] owner=", dragTarget, "started=", true);
           onDraggingChangeRef.current(true);
-          if (dragModeRef.current === "layout") {
+          if (dragTarget === "layout") {
             // Already-accumulated pre-threshold delta counts as the first
             // move too, so the avatar doesn't visually "jump" once dragging
             // starts - mirrors the "window" branch's own scheduleDragUpdate
@@ -238,7 +252,7 @@ export default function DesktopInteractionLayer({
       if (dragging) {
         dragging = false;
         onDraggingChangeRef.current(false);
-        if (dragModeRef.current === "layout") onLayoutDragEndRef.current?.();
+        if (dragTarget === "layout") onLayoutDragEndRef.current?.();
         else window.desktopAPI?.endWindowDrag();
       } else if (pointerDownOnCharacter) {
         onCharacterClickRef.current();
@@ -251,7 +265,7 @@ export default function DesktopInteractionLayer({
       if (dragging) {
         dragging = false;
         onDraggingChangeRef.current(false);
-        if (dragModeRef.current === "layout") onLayoutDragEndRef.current?.();
+        if (dragTarget === "layout") onLayoutDragEndRef.current?.();
         else window.desktopAPI?.endWindowDrag();
       }
       pointerDownOnCharacter = false;

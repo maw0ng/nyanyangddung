@@ -48,10 +48,14 @@ export interface AppearanceTargets {
   faceBase: AppearanceSurfaceTarget[];
   faceEye: AppearanceSurfaceTarget[];
   topsByMaterial: Record<string, AppearanceSurfaceTarget[]>;
-  /** The Body mesh's own morphTargetDictionary/morphTargetInfluences -
-   * same mesh FacePaintScene's Morph panel reads/writes for Local (section
-   * 52 - reusing the exact same target, not a separate copy). */
-  bodyMorphMesh: THREE.Mesh | null;
+  /** Every cloned mesh with its own morphTargetDictionary/
+   * morphTargetInfluences - "Body" (96 facial Shape Keys) and "Body-base"
+   * (the single "shrink" body-shape Shape Key), mirroring the SAME two
+   * meshes FacePaintScene's morphMeshesFor() reads/writes for Local
+   * (bug fix - "Body Morph가 Remote Avatar에 동기화되지 않음": this used to
+   * be a single mesh, which silently dropped "shrink" entirely since it
+   * lives on a different mesh than the facial Shape Keys). */
+  bodyMorphMeshes: THREE.Mesh[];
   /** This instance's own "Head" bone (found in its own SkeletonUtils clone -
    * section 21/28) - the SAME attachment point cosmeticAttachment.ts's
    * attachCosmetic() already uses for Local/Desktop, reused here as-is
@@ -229,19 +233,26 @@ async function applyCosmeticHead(
 /** Returns the number of values actually written, for PART 29's
  * `[RemoteMorph] receivedCount=... appliedCount=...` diagnostic - a gap
  * between the two numbers means some published morph name doesn't exist in
- * this GLB build's morphTargetDictionary (never a crash, section 13). Value
- * `0` is a completely normal, intentional morph weight (section 9) - never
- * treated as "unset" anywhere in this function. */
-function applyMorphValues(mesh: THREE.Mesh | null, morphValues: Record<string, number>): number {
-  if (!mesh?.morphTargetDictionary || !mesh.morphTargetInfluences) return 0;
+ * ANY of this instance's meshes (never a crash, section 13). Value `0` is a
+ * completely normal, intentional morph weight (section 9) - never treated
+ * as "unset" anywhere in this function. Applies each name to EVERY mesh
+ * that actually has it (bug fix - "Body Morph가 Remote Avatar에 동기화되지
+ * 않음": "shrink" lives on a different mesh than the facial Shape Keys, so
+ * a single-mesh apply silently dropped it; PART 2-12 also requires this
+ * generally, for any name that happens to exist on more than one mesh). */
+function applyMorphValues(meshes: THREE.Mesh[], morphValues: Record<string, number>): number {
   let applied = 0;
   for (const [name, value] of Object.entries(morphValues)) {
-    const index = mesh.morphTargetDictionary[name];
-    // Unknown morph name (a manifest from a newer/different schema, or a
-    // GLB mismatch) - skip just this one value, never throw (section 13).
-    if (index === undefined) continue;
-    mesh.morphTargetInfluences[index] = Math.max(0, Math.min(1, value));
-    applied++;
+    for (const mesh of meshes) {
+      if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) continue;
+      const index = mesh.morphTargetDictionary[name];
+      // Unknown morph name on this mesh (a manifest from a newer/different
+      // schema, a GLB mismatch, or simply "belongs to a different mesh") -
+      // skip just this one, never throw (section 13).
+      if (index === undefined) continue;
+      mesh.morphTargetInfluences[index] = Math.max(0, Math.min(1, value));
+      applied++;
+    }
   }
   return applied;
 }
@@ -355,7 +366,7 @@ export async function applyRemoteAppearance(
     applyTexture(surfaceTargets, topsTextures[material] ?? null);
   }
 
-  const appliedMorphCount = applyMorphValues(targets.bodyMorphMesh, manifest.morphValues);
+  const appliedMorphCount = applyMorphValues(targets.bodyMorphMeshes, manifest.morphValues);
   devLog(
     "[RemoteMorph] userId=", userId,
     "receivedCount=", Object.keys(manifest.morphValues).length,

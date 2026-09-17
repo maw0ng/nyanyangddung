@@ -156,7 +156,15 @@ function RemoteAvatarInstance(
     const faceEyeTargets: AppearanceSurfaceTarget[] = [];
     const topsByMaterial: Record<string, AppearanceSurfaceTarget[]> = {};
     const toonTargets: ToonTarget[] = [];
-    let bodyMorphMesh: THREE.Mesh | null = null;
+    // Bug fix ("Body Morph가 Remote Avatar에 동기화되지 않음"): every
+    // cloned mesh that actually carries its own morphTargetDictionary -
+    // "Body" (96 facial Shape Keys) AND "Body-base" (the single "shrink"
+    // body-shape Shape Key, a genuinely separate mesh - see
+    // FacePaintScene.tsx's BODY_SHAPE_NODE_NAME doc comment), never just
+    // one hardcoded mesh. applyMorphValues (remoteAppearanceApply.ts)
+    // applies each published morph name to whichever of these meshes
+    // actually has it.
+    const bodyMorphMeshes: THREE.Mesh[] = [];
 
     for (const label of [
       BODY_NODE_NAME,
@@ -194,22 +202,21 @@ function RemoteAvatarInstance(
           target.mesh.material = toon;
         }
 
-        // Bug fix (Morph sync): this used to unconditionally overwrite
-        // bodyMorphMesh with whichever "face"/"eye" categorized submesh was
-        // processed LAST regardless of whether it actually carries the
-        // Body's morph targets - "Body" loads as a Group of sibling Meshes
-        // (one per material, per collectMaterialTargets' own doc comment),
-        // and only ONE of the base/eye submeshes actually has a
-        // morphTargetDictionary. Whichever one does NOT would silently win
-        // the overwrite depending on traversal order, leaving
-        // morphTargetInfluences on the REAL morph mesh untouched forever
-        // (applyMorphValues' own `!mesh?.morphTargetDictionary` guard then
-        // no-ops on EVERY morph, not just some). Mirrors Local's own
-        // FacePaintScene.tsx `targets.find(t => t.mesh.morphTargetDictionary)`
-        // - first (and only) mesh that actually has the dictionary wins,
-        // never overwritten by one that doesn't.
-        if ((category === "face" || category === "eye") && target.mesh.morphTargetDictionary && !bodyMorphMesh) {
-          bodyMorphMesh = target.mesh;
+        // Bug fix (Morph sync): collect EVERY mesh that actually carries a
+        // morphTargetDictionary (never just one hardcoded/assumed mesh, and
+        // never overwritten/lost - a previous version of this code
+        // unconditionally overwrote a single `bodyMorphMesh` variable with
+        // whichever "face"/"eye" categorized submesh was processed LAST,
+        // even when it had no dictionary at all, silently losing the real
+        // one). "Body" loads as a Group of sibling Meshes (one per
+        // material, per collectMaterialTargets' own doc comment) and only
+        // one of its base/eye submeshes actually has the dictionary;
+        // "Body-base" is a fully separate mesh with its own single
+        // "shrink" entry. Mirrors Local's own FacePaintScene.tsx
+        // morphMeshesFor() - every mesh that actually has a dictionary
+        // participates, nothing is assumed from node/category name alone.
+        if (target.mesh.morphTargetDictionary && !bodyMorphMeshes.includes(target.mesh)) {
+          bodyMorphMeshes.push(target.mesh);
         }
 
         const surfaceTarget: AppearanceSurfaceTarget = { material: toon, originalTexture, flipY: category === "hair" };
@@ -236,7 +243,7 @@ function RemoteAvatarInstance(
       faceBase: faceBaseTargets,
       faceEye: faceEyeTargets,
       topsByMaterial,
-      bodyMorphMesh,
+      bodyMorphMeshes,
       headBone,
       toonTargets,
     };

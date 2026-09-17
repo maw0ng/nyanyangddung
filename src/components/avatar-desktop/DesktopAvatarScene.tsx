@@ -780,13 +780,15 @@ export default function DesktopAvatarScene() {
             onCharacterHoverChange={setCharacterHover}
             onDraggingChange={setDragging}
             onCharacterClick={handleCharacterClick}
-            // Free-placement (feature request): a CoWork Room being active is
-            // what actually determines whether dragging your own avatar
-            // repositions it within the grid ("layout") or drags the whole
-            // BrowserWindow ("window", solo Desktop's original, unchanged
-            // behavior - section 33's regression list). Never both from the
-            // same gesture (section 15).
-            dragMode={coworkRoom.room ? "layout" : "window"}
+            // Bug fix ("CoWork에서 Electron 창 이동이 안 되는 문제"): plain
+            // drag on Local's own avatar always moves the window, in CoWork
+            // exactly as in Solo (PART 1-4) - layoutDragAvailable only turns
+            // on the ADDITIONAL Shift-held gesture for repositioning Local's
+            // own grid slot (the free-placement feature), never replaces
+            // the plain-drag window-move gesture. See
+            // DesktopInteractionLayer's own doc comment for the full
+            // ownership-locking mechanism (PART 1-5).
+            layoutDragAvailable={!!coworkRoom.room}
             onLayoutDragMove={(dx, dy) => participantGridRef.current?.applyLocalDragDelta(dx, dy)}
             onLayoutDragEnd={() => participantGridRef.current?.commitLocalDrag()}
             onDebugUpdate={isDevBuild ? setInteractionDebug : undefined}

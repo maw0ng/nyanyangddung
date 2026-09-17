@@ -1,5 +1,5 @@
 import { canvasToPngBlob } from "./textureIO";
-import { MORPH_CATEGORIES } from "./morphConfig";
+import { MORPH_CATEGORIES, BODY_SHAPE_MORPH_NAMES } from "./morphConfig";
 import type { CharacterSurfaceLayers, StoredPaintLayer } from "./types";
 
 /**
@@ -91,17 +91,24 @@ export function buildHairOverlay(layers: StoredPaintLayer[]): Promise<Blob | nul
  * Network customization morph filter (section 11/12/13) - reuses the SAME
  * category match predicates the Avatar Editor's own Morph panel already
  * uses (morphConfig.ts's MORPH_CATEGORIES: custom-eye-1..4, eye-prefixed,
- * ppl-prefixed, brw-prefixed, mouth-prefixed), so nothing here re-derives
- * or hardcodes the customization name list. Anything NOT matching one of
- * those categories (blink, vrc.v_-prefixed, set--prefixed, tear, sweat,
- * cheek, ear-human, shrink, ...) is a transient/internal Shape Key and is
- * silently excluded, never published. Values are clamped to 0..1 (section
- * 13).
+ * ppl-prefixed, brw-prefixed, mouth-prefixed) PLUS the one genuine body-
+ * shape Shape Key (BODY_SHAPE_MORPH_NAMES - "shrink", confirmed to live on
+ * a separate mesh, "Body-base" - see FacePaintScene.tsx's
+ * BODY_SHAPE_NODE_NAME doc comment), so nothing here re-derives or
+ * hardcodes the customization name list. Anything NOT matching one of
+ * those (blink, vrc.v_-prefixed, set--prefixed, tear/tear_left/tear_right,
+ * sweat-1/2/3, cheek, ear-human, ...) is a transient/internal/expression
+ * Shape Key and is silently excluded, never published - bug fix
+ * ("Body Morph가 Remote에 동기화되지 않음"): "shrink" used to fall into
+ * this excluded bucket too, even though it's the app's only actual body-
+ * shape customization, simply because nothing distinguished it from the
+ * truly-internal ones. Values are clamped to 0..1 (section 13).
  */
 export function filterCustomizationMorphs(values: Record<string, number>): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [name, value] of Object.entries(values)) {
-    if (!MORPH_CATEGORIES.some((c) => c.match(name))) continue;
+    const allowed = MORPH_CATEGORIES.some((c) => c.match(name)) || BODY_SHAPE_MORPH_NAMES.includes(name);
+    if (!allowed) continue;
     if (typeof value !== "number" || !Number.isFinite(value)) continue;
     out[name] = Math.max(0, Math.min(1, value));
   }

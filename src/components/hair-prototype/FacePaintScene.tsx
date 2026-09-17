@@ -32,6 +32,19 @@ import {
 import { MODEL_URL } from "./modelConfig";
 
 const BODY_NODE_NAME = "Body";
+/** Bug fix ("Body Morph가 Remote에 동기화되지 않음"): the GLB's ONLY
+ * genuine full-body-shape Shape Key - "shrink" - lives on a COMPLETELY
+ * SEPARATE mesh/node from every facial Shape Key (the custom-eye, eye,
+ * ppl, brw and mouth prefixed ones, all 96 of which live on "Body" alone).
+ * Confirmed by dumping this GLB's own glTF JSON chunk
+ * (meshes[].extras.targetNames) - never guessed. Before this fix, nothing
+ * in the app ever read/wrote "Body-base"'s own morphTargetDictionary at
+ * all, so "shrink" was 100 percent inert: not shown in any panel, not
+ * saved to CharacterPreset, and therefore never had anything to sync to
+ * Remote in the first place - the "Body Morph" bug wasn't only a network-
+ * export filter gap, it started with this local mesh never being watched
+ * at all. */
+const BODY_SHAPE_NODE_NAME = "Body-base";
 const FALLBACK_CANVAS_SIZE = 1024;
 // A jump larger than this in either UV axis between two consecutive stroke
 // points is treated as "landed on a different UV island", not "drag across
@@ -209,7 +222,20 @@ function FacePaintScene(
     morphTargetInfluences?: number[];
   };
   const morphMeshRef = useRef<MorphMesh | null>(null);
+  /** "Body-base"'s own single "shrink" Shape Key - see BODY_SHAPE_NODE_NAME's
+   * own doc comment. Kept as a genuinely separate ref (not folded into
+   * morphMeshRef) since it's a different mesh with its own independent
+   * morphTargetDictionary/morphTargetInfluences array - getMorphNames/
+   * getMorphValues/setMorphValue(s)/resetMorphToDefault below simply
+   * consult both meshes via morphMeshesFor(), so callers keep working with
+   * ONE flat name->value map exactly as before (no new API surface). */
+  const bodyShapeMeshRef = useRef<MorphMesh | null>(null);
   const defaultMorphValuesRef = useRef<Record<string, number> | null>(null);
+  function morphMeshesFor(): MorphMesh[] {
+    return [morphMeshRef.current, bodyShapeMeshRef.current].filter(
+      (m): m is MorphMesh => !!m?.morphTargetDictionary && !!m.morphTargetInfluences
+    );
+  }
 
   const editModeRef = useRef(editMode);
   const toolRef = useRef(tool);
@@ -315,44 +341,46 @@ function FacePaintScene(
       reorderLayers: (layer, ids) => getSurface(layer)?.engine.reorderLayers(ids),
       clearHistory: (layer) => getSurface(layer)?.engine.clearHistory(),
       getMorphNames: () => {
-        const dict = morphMeshRef.current?.morphTargetDictionary;
-        return dict ? Object.keys(dict) : [];
+        const names: string[] = [];
+        for (const mesh of morphMeshesFor()) names.push(...Object.keys(mesh.morphTargetDictionary!));
+        return names;
       },
       getMorphValues: () => {
-        const mesh = morphMeshRef.current;
         const result: Record<string, number> = {};
-        if (mesh?.morphTargetDictionary && mesh.morphTargetInfluences) {
-          for (const [name, idx] of Object.entries(mesh.morphTargetDictionary)) {
-            result[name] = mesh.morphTargetInfluences[idx] ?? 0;
+        for (const mesh of morphMeshesFor()) {
+          for (const [name, idx] of Object.entries(mesh.morphTargetDictionary!)) {
+            result[name] = mesh.morphTargetInfluences![idx] ?? 0;
           }
         }
         return result;
       },
       setMorphValue: (name, value) => {
-        const mesh = morphMeshRef.current;
-        if (!mesh?.morphTargetDictionary || !mesh.morphTargetInfluences) return;
-        const idx = mesh.morphTargetDictionary[name];
-        if (idx === undefined) return;
-        mesh.morphTargetInfluences[idx] = value;
+        for (const mesh of morphMeshesFor()) {
+          const idx = mesh.morphTargetDictionary![name];
+          if (idx === undefined) continue;
+          mesh.morphTargetInfluences![idx] = value;
+        }
       },
       setMorphValues: (values) => {
-        const mesh = morphMeshRef.current;
-        if (!mesh?.morphTargetDictionary || !mesh.morphTargetInfluences) return;
+        const meshes = morphMeshesFor();
         for (const [name, value] of Object.entries(values)) {
-          const idx = mesh.morphTargetDictionary[name];
-          // Unknown morph name in stored data (e.g. an older/newer GLB
-          // revision) - ignore it rather than crash.
-          if (idx === undefined) continue;
-          mesh.morphTargetInfluences[idx] = value;
+          for (const mesh of meshes) {
+            const idx = mesh.morphTargetDictionary![name];
+            // Unknown morph name in stored data (e.g. an older/newer GLB
+            // revision) - ignore it rather than crash.
+            if (idx === undefined) continue;
+            mesh.morphTargetInfluences![idx] = value;
+          }
         }
       },
       getDefaultMorphValues: () => ({ ...(defaultMorphValuesRef.current ?? {}) }),
       resetMorphToDefault: () => {
-        const mesh = morphMeshRef.current;
         const defaults = defaultMorphValuesRef.current;
-        if (!mesh?.morphTargetDictionary || !mesh.morphTargetInfluences || !defaults) return;
-        for (const [name, idx] of Object.entries(mesh.morphTargetDictionary)) {
-          mesh.morphTargetInfluences[idx] = defaults[name] ?? 0;
+        if (!defaults) return;
+        for (const mesh of morphMeshesFor()) {
+          for (const [name, idx] of Object.entries(mesh.morphTargetDictionary!)) {
+            mesh.morphTargetInfluences![idx] = defaults[name] ?? 0;
+          }
         }
       },
       getBodyMeshName: () => morphMeshRef.current?.name ?? null,
@@ -449,18 +477,44 @@ function FacePaintScene(
         .length;
     }
     morphMeshRef.current = meshWithMorphs ?? null;
-    // Capture the GLB's own initial morph weights exactly once, so a new
-    // Character (or "기본" preset) always resets to what the model actually
-    // shipped with - never to whatever the previously active character had
-    // last set. Guarded so a StrictMode dev remount can't clobber it with
-    // already-user-edited influences.
-    if (defaultMorphValuesRef.current === null && meshWithMorphs?.morphTargetDictionary) {
+    // (Body-base's own "shrink" count folds into morphTargetCount right
+    // after it's discovered below, for the debug panel's total.)
+
+    // Bug fix ("Body Morph") - "Body-base"'s own separate "shrink" Shape
+    // Key (BODY_SHAPE_NODE_NAME's own doc comment). A completely
+    // independent discovery from "Body" above (different node, different
+    // mesh, own morphTargetDictionary) - found the same runtime-verified
+    // way (never assumed to exist).
+    const bodyShapeNode = gltf.scene.getObjectByName(BODY_SHAPE_NODE_NAME);
+    const bodyShapeMesh = bodyShapeNode
+      ? (collectMaterialTargets(bodyShapeNode).find((t) => t.mesh.morphTargetDictionary)
+          ?.mesh as MorphMesh | undefined)
+      : undefined;
+    bodyShapeMeshRef.current = bodyShapeMesh ?? null;
+    if (bodyShapeMesh?.morphTargetDictionary) {
+      morphTargetCount = (morphTargetCount ?? 0) + Object.keys(bodyShapeMesh.morphTargetDictionary).length;
+    }
+
+    // Capture the GLB's own initial morph weights exactly once (both
+    // meshes, merged into the same flat default map - CharacterPreset
+    // already stores every morph name in one flat Record regardless of
+    // which mesh it lives on), so a new Character (or "기본" preset)
+    // always resets to what the model actually shipped with - never to
+    // whatever the previously active character had last set. Guarded so a
+    // StrictMode dev remount can't clobber it with already-user-edited
+    // influences.
+    if (defaultMorphValuesRef.current === null) {
       const defaults: Record<string, number> = {};
-      const influences = meshWithMorphs.morphTargetInfluences ?? [];
-      for (const [name, idx] of Object.entries(meshWithMorphs.morphTargetDictionary)) {
-        defaults[name] = influences[idx] ?? 0;
+      for (const mesh of [meshWithMorphs, bodyShapeMesh]) {
+        if (!mesh?.morphTargetDictionary) continue;
+        const influences = mesh.morphTargetInfluences ?? [];
+        for (const [name, idx] of Object.entries(mesh.morphTargetDictionary)) {
+          defaults[name] = influences[idx] ?? 0;
+        }
       }
-      defaultMorphValuesRef.current = defaults;
+      if (meshWithMorphs?.morphTargetDictionary || bodyShapeMesh?.morphTargetDictionary) {
+        defaultMorphValuesRef.current = defaults;
+      }
     }
 
     onDebugUpdate({
